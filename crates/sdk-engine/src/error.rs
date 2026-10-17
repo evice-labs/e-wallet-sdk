@@ -5,11 +5,8 @@
 
 use thiserror::Error;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, serde::Serialize, serde::Deserialize)]
-pub struct SessionId(pub String);
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, derive_more::Display, serde::Serialize, serde::Deserialize)]
-pub struct RequestId(pub String);
+use crate::request::RequestId;
+use crate::session::SessionId;
 
 /// Result type alias used throughout the SDK engine.
 pub type SdkResult<T> = Result<T, SdkError>;
