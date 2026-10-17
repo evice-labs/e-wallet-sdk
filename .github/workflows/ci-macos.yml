@@ -12,14 +12,21 @@ env:
 jobs:
   check:
     runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: e-wallet-sdk
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: e-wallet-sdk
       - uses: actions/checkout@v4
         with:
           repository: logos-blockchain/logos-execution-zone
-          path: ../logos-execution-zone
-          ref: ${{ vars.LEZ_COMMIT }}
+          path: logos-execution-zone
+          ref: dev
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: e-wallet-sdk
       - run: cargo check --workspace
       - run: cargo test --workspace
