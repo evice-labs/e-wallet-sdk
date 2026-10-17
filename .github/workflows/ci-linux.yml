@@ -17,6 +17,8 @@ jobs:
       run:
         working-directory: e-wallet-sdk
     steps:
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev pkg-config
       - uses: actions/checkout@v4
         with:
           path: e-wallet-sdk
@@ -40,6 +42,8 @@ jobs:
       run:
         working-directory: e-wallet-sdk
     steps:
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev pkg-config
       - uses: actions/checkout@v4
         with:
           path: e-wallet-sdk
