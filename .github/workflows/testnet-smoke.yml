@@ -1,0 +1,27 @@
+name: Testnet Smoke
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly Monday 06:00 UTC
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: logos-blockchain/logos-execution-zone
+          path: ../logos-execution-zone
+          ref: ${{ vars.LEZ_COMMIT }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --bin lez-wallet
+      - run: |
+          # TODO(M2): Real-proof smoke test against testnet 0.4
+          echo "Smoke test placeholder — connect to testnet and verify basic operations"
+          cargo run --bin lez-wallet -- info
