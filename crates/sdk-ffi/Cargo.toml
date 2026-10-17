@@ -1,0 +1,19 @@
+[package]
+name = "sdk-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "C-ABI FFI exports for the LEZ Wallet SDK engine"
+
+[lib]
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+sdk-engine.workspace = true
+wallet.workspace = true
+lee.workspace = true
+lee_core.workspace = true
+common.workspace = true
+tokio.workspace = true
+serde_json.workspace = true
+log.workspace = true

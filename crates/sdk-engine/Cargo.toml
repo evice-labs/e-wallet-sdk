@@ -1,0 +1,46 @@
+[package]
+name = "sdk-engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "LEZ Wallet SDK core engine — sessions, approval, requests, and wallet orchestration"
+
+[dependencies]
+# LEZ upstream
+wallet.workspace = true
+lee.workspace = true
+lee_core.workspace = true
+common.workspace = true
+key_protocol.workspace = true
+sequencer_service_rpc.workspace = true
+
+# Third-party
+argon2.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+bip39.workspace = true
+borsh.workspace = true
+chrono.workspace = true
+dashmap.workspace = true
+derive_more.workspace = true
+futures.workspace = true
+hex.workspace = true
+log.workspace = true
+rand.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+url.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+[features]
+default = []
+# Auto-approve handler for testing/dev only. MUST NOT ship in release builds.
+dev-auto-approve = []
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tempfile = "3"

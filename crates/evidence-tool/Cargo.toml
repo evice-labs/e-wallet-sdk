@@ -1,0 +1,24 @@
+[package]
+name = "evidence-tool"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Per-month testimonial counts from chain data for adoption evidence"
+
+[[bin]]
+name = "evidence-tool"
+path = "src/main.rs"
+
+[dependencies]
+wallet.workspace = true
+lee.workspace = true
+lee_core.workspace = true
+
+common.workspace = true
+clap.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+hex.workspace = true
