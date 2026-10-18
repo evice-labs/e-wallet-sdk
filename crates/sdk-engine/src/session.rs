@@ -44,6 +44,8 @@ impl Default for SessionId {
 pub enum GrantKind {
     Read,
     Propose,
+    IdentityRead,
+    IdentityPropose,
 }
 
 /// A grant ties a [`GrantKind`] to a specific account.
@@ -79,6 +81,23 @@ impl Session {
                 account: *account,
                 kind: GrantKind::Propose,
             }))
+    }
+
+    /// Check whether this session has identity permissions.
+    /// `IdentityPropose` implies `IdentityRead`.
+    pub fn has_identity_grant(&self, kind: GrantKind) -> bool {
+        self.grants.iter().any(|g| {
+            g.kind == kind
+                || (kind == GrantKind::IdentityRead && g.kind == GrantKind::IdentityPropose)
+        })
+    }
+
+    /// Add an identity permission grant to this session.
+    pub fn add_identity_grant(&mut self, kind: GrantKind) -> bool {
+        self.grants.insert(SessionGrant {
+            account: AccountId::default(),
+            kind,
+        })
     }
 
     /// Returns whether the grant was newly inserted.

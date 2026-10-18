@@ -93,6 +93,7 @@ pub struct SdkEngine {
     resolver: Box<dyn NameResolver>,
     store: Arc<Mutex<PersistentStore>>,
     approval_handler: Arc<dyn ApprovalHandler>,
+    identity_secret: Arc<Mutex<Option<crate::identity::IdentitySecret>>>,
     config: SdkConfig,
 }
 
@@ -150,6 +151,51 @@ pub trait DAppApi {
         session_id: &SessionId,
         name: &str,
     ) -> impl std::future::Future<Output = SdkResult<crate::resolve::ResolvedDestination>> + Send;
+
+    /// Request identity permission grants (`IdentityRead` or `IdentityPropose`) for this session.
+    fn request_identity_access(
+        &self,
+        session_id: &SessionId,
+        kind: GrantKind,
+    ) -> impl std::future::Future<Output = SdkResult<()>> + Send;
+
+    /// Retrieve the user's public identity commitment derived from the root seed.
+    ///
+    /// Requires `IdentityRead` grant.
+    fn get_identity_commitment(
+        &self,
+        session_id: &SessionId,
+    ) -> impl std::future::Future<Output = SdkResult<crate::identity::IdentityCommitment>> + Send;
+
+    /// Derive a scope-specific pseudonymous nullifier for unlinkable actions across dApps.
+    ///
+    /// Requires `IdentityRead` grant.
+    fn derive_scoped_nullifier(
+        &self,
+        session_id: &SessionId,
+        scope_id: &str,
+    ) -> impl std::future::Future<Output = SdkResult<crate::identity::ScopedNullifier>> + Send;
+
+    /// Sign an arbitrary message (e.g. voting ballot or membership claim) using the scoped credential.
+    ///
+    /// Requires `IdentityPropose` grant.
+    fn sign_identity_attestation(
+        &self,
+        session_id: &SessionId,
+        scope_id: &str,
+        message: &[u8],
+    ) -> impl std::future::Future<Output = SdkResult<crate::identity::AttestationPayload>> + Send;
+
+    /// Prepare an on-chain registration payload with SSS threshold shares encrypted to designated accountability trustees.
+    ///
+    /// Requires `IdentityPropose` grant.
+    fn prepare_identity_registration(
+        &self,
+        session_id: &SessionId,
+        scope_id: &str,
+        node_pubkeys: &[[u8; 32]],
+        threshold_k: u8,
+    ) -> impl std::future::Future<Output = SdkResult<crate::identity::RegistrationPayload>> + Send;
 }
 
 /// Owner API  — privileged.
@@ -218,6 +264,7 @@ impl SdkEngine {
             resolver: Box::new(LnsResolver::new(lns_config)),
             store: Arc::new(Mutex::new(store)),
             approval_handler,
+            identity_secret: Arc::new(Mutex::new(None)),
             config,
         })
     }
@@ -240,6 +287,22 @@ impl SdkEngine {
             return Err(SdkError::InsufficientGrant);
         }
         Ok(session)
+    }
+
+    async fn require_identity_grant(
+        &self,
+        session_id: &SessionId,
+        kind: GrantKind,
+    ) -> SdkResult<crate::session::Session> {
+        let session = self.validate_session(session_id).await?;
+        if !session.has_identity_grant(kind) {
+            return Err(SdkError::InsufficientGrant);
+        }
+        Ok(session)
+    }
+
+    pub async fn set_identity_secret(&self, secret: Option<crate::identity::IdentitySecret>) {
+        *self.identity_secret.lock().await = secret;
     }
 
     async fn resolve_destination(&self, input: &str) -> SdkResult<AccountId> {
@@ -453,6 +516,76 @@ impl DAppApi for SdkEngine {
             Err(e) => Err(SdkError::NameResolutionError(e.to_string())),
         }
     }
+
+    async fn request_identity_access(
+        &self,
+        session_id: &SessionId,
+        kind: GrantKind,
+    ) -> SdkResult<()> {
+        let _ = self.validate_session(session_id).await?;
+        if kind != GrantKind::IdentityRead && kind != GrantKind::IdentityPropose {
+            return Err(SdkError::InvalidArgument(
+                "Must specify IdentityRead or IdentityPropose".into(),
+            ));
+        }
+        self.sessions
+            .update(session_id, |s| {
+                s.add_identity_grant(kind);
+            })
+            .await
+            .ok_or_else(|| SdkError::SessionNotFound(session_id.clone()))?;
+        Ok(())
+    }
+
+    async fn get_identity_commitment(
+        &self,
+        session_id: &SessionId,
+    ) -> SdkResult<crate::identity::IdentityCommitment> {
+        self.require_identity_grant(session_id, GrantKind::IdentityRead)
+            .await?;
+        let guard = self.identity_secret.lock().await;
+        let secret = guard.as_ref().ok_or(SdkError::WalletLocked)?;
+        Ok(crate::identity::derive_identity_commitment(secret))
+    }
+
+    async fn derive_scoped_nullifier(
+        &self,
+        session_id: &SessionId,
+        scope_id: &str,
+    ) -> SdkResult<crate::identity::ScopedNullifier> {
+        self.require_identity_grant(session_id, GrantKind::IdentityRead)
+            .await?;
+        let guard = self.identity_secret.lock().await;
+        let secret = guard.as_ref().ok_or(SdkError::WalletLocked)?;
+        Ok(crate::identity::derive_scoped_nullifier(secret, scope_id))
+    }
+
+    async fn sign_identity_attestation(
+        &self,
+        session_id: &SessionId,
+        scope_id: &str,
+        message: &[u8],
+    ) -> SdkResult<crate::identity::AttestationPayload> {
+        self.require_identity_grant(session_id, GrantKind::IdentityPropose)
+            .await?;
+        let guard = self.identity_secret.lock().await;
+        let secret = guard.as_ref().ok_or(SdkError::WalletLocked)?;
+        crate::identity::sign_identity_attestation(secret, scope_id, message)
+    }
+
+    async fn prepare_identity_registration(
+        &self,
+        session_id: &SessionId,
+        scope_id: &str,
+        node_pubkeys: &[[u8; 32]],
+        threshold_k: u8,
+    ) -> SdkResult<crate::identity::RegistrationPayload> {
+        self.require_identity_grant(session_id, GrantKind::IdentityPropose)
+            .await?;
+        let guard = self.identity_secret.lock().await;
+        let secret = guard.as_ref().ok_or(SdkError::WalletLocked)?;
+        crate::identity::prepare_identity_registration(secret, scope_id, node_pubkeys, threshold_k)
+    }
 }
 
 impl OwnerApi for SdkEngine {
@@ -468,6 +601,10 @@ impl OwnerApi for SdkEngine {
         *wallet = new_wallet;
 
         let mut store = self.store.lock().await;
+        let seed = mnemonic.to_seed(password);
+        let identity = crate::identity::derive_identity_secret(&seed);
+        *self.identity_secret.lock().await = Some(identity);
+
         store.state_mut().locked = false;
         store.save().map_err(SdkError::Internal)?;
 
@@ -482,6 +619,10 @@ impl OwnerApi for SdkEngine {
         }
         wallet.store_persistent_data().map_err(SdkError::Internal)?;
 
+        let seed = mnemonic.to_seed(password);
+        let identity = crate::identity::derive_identity_secret(&seed);
+        *self.identity_secret.lock().await = Some(identity);
+
         let mut store = self.store.lock().await;
         store.state_mut().locked = false;
         store.save().map_err(SdkError::Internal)?;
@@ -493,6 +634,7 @@ impl OwnerApi for SdkEngine {
         for s in &sessions {
             self.sessions.revoke(&s.id).await;
         }
+        *self.identity_secret.lock().await = None;
         let mut store = self.store.lock().await;
         store.state_mut().locked = true;
         store.save().map_err(SdkError::Internal)?;

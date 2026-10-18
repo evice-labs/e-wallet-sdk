@@ -1,0 +1,370 @@
+# System Architecture & Technical Specification
+
+> **Evice Wallet SDK (`e-wallet-sdk`)**  
+> Modular, headless Wallet Engine and dApp Provider SDK for the Logos Execution Zone (LEZ).  
+> Designed to satisfy the functional, security, and usability specifications of [LP-0021](https://github.com/logos-co/lambda-prize/blob/master/prizes/LP-0021.md).
+
+## 1. Architectural Philosophy & Design Principles
+
+The Evice Wallet SDK is engineered around five fundamental architectural tenets:
+
+1. **Headless Core Separation:** The core business logic, session security, transaction pipeline, and cryptographic operations are strictly isolated in a pure Rust crate (`sdk-engine`) with zero graphical (Qt/QML/web) or platform-specific UI dependencies.
+2. **Explicit User Consent & Non-Blind Signing:** External applications (dApps) are untrusted by default. No transaction can be signed or submitted, and no private balance can be inspected, without explicit, account-scoped authorization and human-readable effect simulation.
+3. **Time-of-Check to Time-of-Use (TOCTOU) Defense:** Every transaction proposal is bound to an immutable intent hash at creation. Modifying parameters between user review, simulation, and on-chain submission invalidates the request immediately.
+4. **Crash-Safe Atomic Durability:** Local state storage employs atomic write-then-rename primitives and directory fsyncs, backed by snapshot redundancy, guaranteeing zero state corruption during sudden application termination or power loss.
+5. **No Mandatory External Services:** All core operations execute purely client-side or communicate directly with the user's designated LEZ sequencer node. No analytics, tracking telemetry, or third-party cloud intermediaries are utilized.
+
+## 2. Workspace & Crate Decomposition
+
+The workspace is structured into specialized, loosely coupled crates under `crates/`:
+
+```
+e-wallet-sdk/
+├── Cargo.toml                  # Workspace root manifest and unified dependency pins
+├── SUBMISSION_ID               # Unique submission identifier for on-chain attribution
+├── README.md                   # Quickstart, installation, and build documentation
+├── crates/
+│   ├── sdk-engine/             # Core headless wallet engine (pure Rust)
+│   ├── sdk-ffi/                # C-ABI export layer for Basecamp Qt integration
+│   ├── cli/                    # Headless CLI binary (`lez-wallet`)
+│   └── evidence-tool/          # On-chain testimonial adoption audit utility
+├── dev-env/                    # Local development sequencer and pre-funded genesis accounts
+├── docs/                       # Specifications, architecture, and documentation
+│   └── ARCHITECTURE.md         # This comprehensive architecture document
+└── .github/workflows/          # Continuous Integration for Linux and macOS runners
+```
+
+### Component Responsibility Matrix
+
+| Crate | Responsibility | Public Interface | Key Dependencies |
+|---|---|---|---|
+| **`sdk-engine`** | Central orchestrator, session/grant store, transaction pipeline, decoders, effect simulations, LNS resolver, identity accountability (HKDF, BIP-340 Schnorr, Two-Tier SSS), atomic persistence, and token facade. | `DAppApi`, `OwnerApi`, `SdkEngine`, `ApprovalHandler` | `wallet`, `lee`, `common`, `tokio`, `argon2`, `sha2`, `k256`, `sharks` |
+| **`sdk-ffi`** | Exposes C-ABI (`extern "C"`) functions with opaque handles and JSON serialization for Logos Basecamp desktop plugins (`wallet-provider`). | `lez_sdk_version()`, `lez_sdk_api_version()` | `sdk-engine`, `serde_json`, `cbindgen` |
+| **`cli`** | Interactive command-line binary (`lez-wallet`) for headless operations, scripting, local testing, and offline address resolution. | Command-line interface via `clap` | `sdk-engine`, `tokio`, `clap`, `env_logger` |
+| **`evidence-tool`** | Scans on-chain testimonial records from testnet sequencer, filtering by `submission_id` to verify distinct accounts and temporal dispersion. | Command-line audit utility | `wallet`, `common`, `clap`, `tokio` |
+
+## 3. System Architecture Diagram
+
+```
+┌────────────────────────────────────────────────────────────────────────┐
+│                          CONSUMER LAYER                                │
+│                                                                        │
+│   ┌──────────────────────────┐             ┌─────────────────────────┐ │
+│   │   Third-Party LEZ dApps  │             │   Logos Basecamp App    │ │
+│   │   (Basecamp UI Modules)  │             │   (Desktop QML UI)      │ │
+│   └────────────┬─────────────┘             └────────────┬────────────┘ │
+│                │                                        │              │
+│                │ (IPC / Plugin Interface)               │              │
+│                ▼                                        ▼              │
+│   ┌──────────────────────────┐             ┌─────────────────────────┐ │
+│   │   `wallet-provider`      │             │   Terminal User         │ │
+│   │   (Basecamp Core Module) │             │   (CLI `lez-wallet`)    │ │
+│   └────────────┬─────────────┘             └────────────┬────────────┘ │
+└────────────────┼────────────────────────────────────────┼──────────────┘
+                 │                                        │
+                 ▼ (C-ABI Boundary)                       ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                          INTEROP LAYER                                 │
+│                                                                        │
+│   `sdk-ffi`                                                            │
+│   • Opaque Pointer Handles (`*mut SdkEngineHandle`)                    │
+│   • ABI-Safe JSON Serialization                                        │
+│   • C String Error Buffering & Status Codes                            │
+└─────────────────────────────────┬──────────────────────────────────────┘
+                                  │
+                                  ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                        CORE ENGINE LAYER                               │
+│                                                                        │
+│   `sdk-engine`                                                         │
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │                     SdkEngine Orchestrator                     │   │
+│   │         ┌──────────────────────┬──────────────────────┐        │   │
+│   │         │       DAppApi        │       OwnerApi       │        │   │
+│   │         └──────────────────────┴──────────────────────┘        │   │
+│   └──────┬──────────┬──────────┬──────────┬──────────┬──────────┬──┘   │
+│          │          │          │          │          │          │      │
+│          ▼          ▼          ▼          ▼          ▼          ▼      │
+│   ┌───────────────┐ ┌───────────────┐ ┌───────────────┐ ┌────────────┐ │
+│   │ Session       │ │ Request Queue │ │ Decoders &    │ │ LNS Name   │ │
+│   │ & Grants      │ │ & Intents     │ │ Simulations   │ │ Resolver   │ │
+│   └───────────────┘ └───────────────┘ └───────────────┘ └────────────┘ │
+│   ┌───────────────┐ ┌───────────────┐ ┌──────────────────────────────┐ │
+│   │ Approval      │ │ Identity      │ │ Atomic Persistent Store      │ │
+│   │ Handlers      │ │ Accountability│ │ (Write-then-Rename + .bak)   │ │
+│   └───────────────┘ └───────────────┘ └──────────────────────────────┘ │
+└─────────────────────────────────┬──────────────────────────────────────┘
+                                  │
+                                  ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                     UNDERLYING LEZ PLATFORM                            │
+│                                                                        │
+│   `logos-execution-zone` (`dev` branch)                                │
+│   • `lez/wallet` (Key management, Argon2 storage, state persistence)   │
+│   • `lee` (State machine, account model, cryptographic types)          │
+│   • LEZ Sequencer RPC Service                                          │
+└────────────────────────────────────────────────────────────────────────┘
+```
+
+## 4. Deep-Dive: Core Engine Subsystems (`sdk-engine`)
+
+### 4.1 Orchestrator & Dual-API Architecture (`api.rs`)
+
+The central engine is encapsulated by `SdkEngine`, maintaining an `Arc`-wrapped, thread-safe state container. It cleanly partitions operational capabilities into two distinct trait interfaces:
+
+```rust
+// Trait exposed to external, untrusted dApps (consumed via Session)
+pub trait DAppApi {
+    fn sdk_info(&self) -> Future<Output = SdkResult<SdkInfo>>;
+    fn connect(&self, module_id: &str) -> Future<Output = SdkResult<SessionId>>;
+    fn disconnect(&self, session: &SessionId) -> Future<Output = SdkResult<()>>;
+    fn request_accounts(&self, session: &SessionId, accounts: Vec<AccountId>, kind: GrantKind) -> Future<Output = SdkResult<()>>;
+    fn list_accounts(&self, session: &SessionId) -> Future<Output = SdkResult<Vec<AccountView>>>;
+    fn get_balance(&self, session: &SessionId, account: &AccountId) -> Future<Output = SdkResult<u128>>;
+    fn propose_native_transfer(&self, session: &SessionId, from: AccountId, to: AccountId, amount: u128) -> Future<Output = SdkResult<RequestId>>;
+    fn get_request_status(&self, session: &SessionId, request_id: &RequestId) -> Future<Output = SdkResult<RequestStatus>>;
+    fn cancel_request(&self, session: &SessionId, request_id: &RequestId) -> Future<Output = SdkResult<()>>;
+    fn resolve_name(&self, name: &str) -> Future<Output = SdkResult<Option<AccountId>>>;
+
+    // Identity Accountability & Accountable Pseudonymity
+    fn request_identity_access(&self, session: &SessionId, kind: GrantKind) -> Future<Output = SdkResult<()>>;
+    fn get_identity_commitment(&self, session: &SessionId) -> Future<Output = SdkResult<IdentityCommitment>>;
+    fn derive_scoped_nullifier(&self, session: &SessionId, scope: &str) -> Future<Output = SdkResult<ScopedNullifier>>;
+    fn sign_identity_attestation(&self, session: &SessionId, scope: &str, message: &[u8]) -> Future<Output = SdkResult<AttestationPayload>>;
+    fn prepare_identity_registration(&self, session: &SessionId, scope: &str, trustees: &[[u8; 32]], threshold_k: u8) -> Future<Output = SdkResult<RegistrationPayload>>;
+}
+
+// Privileged management trait reserved exclusively for the local wallet owner
+pub trait OwnerApi {
+    fn create_wallet(&self, password: &str) -> Future<Output = SdkResult<Mnemonic>>;
+    fn restore_wallet(&self, mnemonic: &Mnemonic, password: &str) -> Future<Output = SdkResult<()>>;
+    fn lock(&self) -> Future<Output = SdkResult<()>>;
+    fn unlock(&self, password: &str) -> Future<Output = SdkResult<()>>;
+    fn create_account_public(&self, label: Option<String>) -> Future<Output = SdkResult<AccountId>>;
+    fn create_account_private(&self, label: Option<String>) -> Future<Output = SdkResult<AccountId>>;
+    fn list_all_accounts(&self) -> Future<Output = SdkResult<Vec<AccountView>>>;
+    fn list_sessions(&self) -> Future<Output = SdkResult<Vec<Session>>>;
+    fn revoke_session(&self, session_id: &SessionId) -> Future<Output = SdkResult<()>>;
+}
+```
+
+### 4.2 Granular Session & Permission Security (`session.rs`)
+
+External dApps communicate with the SDK through isolated, ephemeral sessions:
+
+- **Session Lifecycle:** A dApp calls `connect(module_id)`, which generates a cryptographic `SessionId` (UUID v4) and registers a `Session` with an initial duration of 1 hour (`DEFAULT_SESSION_DURATION`).
+- **Account-Level Grants:** A session starts with zero grants. The dApp must explicitly call `request_accounts(...)` to request privileges per account:
+  - `GrantKind::Read`: Grants permission to inspect the account's balance and public program state. A dApp *cannot* read even the existence or balance of a private/shielded account without an explicit `Read` grant.
+  - `GrantKind::Propose`: Grants permission to assemble and submit transaction proposals for human approval.
+  - `GrantKind::IdentityRead`: Grants permission to inspect the public identity commitment and derive scope-specific pseudonymous nullifiers.
+  - `GrantKind::IdentityPropose`: Grants permission to sign scoped attestations or prepare threshold trustee registration payloads.
+- **Automatic Expiry & Eviction:** The `SessionStore` checks timestamps against monotonic system time. Expired sessions are pruned and automatically rejected on subsequent calls.
+- **Lock Invalidation:** When the wallet is locked via `OwnerApi::lock()`, all active sessions across all dApps are revoked immediately.
+
+### 4.3 Request Immutability & Intent Hashing (`request.rs`)
+
+To prevent Time-of-Check to Time-of-Use (TOCTOU) exploits—where a malicious payload might alter transaction parameters after user review but prior to cryptographic signing—the engine enforces an immutable request pipeline:
+
+1. **Request Creation:** A propose call (e.g. `propose_native_transfer`) creates a `PendingRequest` with a unique `RequestId`.
+2. **Intent Hash Calculation:** The engine immediately computes a deterministic 32-byte SHA-256 hash binding the request:
+   ```
+   IntentHash = SHA-256(
+       "lez-wallet-sdk/intent/v1/" ‖
+       RequestId ‖
+       SessionId ‖
+       Serialized(RequestKind)
+   )
+   ```
+3. **Immutability Enforcement:** The `PendingRequest` is stored in `RequestStore`. At the moment of signing and submission, the intent hash is recomputed against the active payload. If any parameter, recipient, amount, or session context deviates by even a single bit, execution is aborted with `SdkError::IntentHashMismatch`.
+
+### 4.4 Non-Blocking Asynchronous Approval Handlers (`approval.rs`)
+
+The SDK completely decouples approval presentation from the transaction lifecycle via the `ApprovalHandler` trait:
+
+```rust
+pub trait ApprovalHandler: Send + Sync {
+    fn prompt_approval(
+        &self,
+        prompt: &ApprovalPrompt,
+    ) -> impl Future<Output = Result<ApprovalDecision, SdkError>> + Send;
+}
+```
+
+- **Rich Approval Context:** Every `ApprovalPrompt` delivers structured metadata:
+  - `request_id`: Unique request reference.
+  - `module_id`: Authenticated origin identifier of the requesting dApp.
+  - `summary`: Human-readable description of the operation.
+  - `effects`: Pre-calculated balance changes and state mutations.
+  - `program_id`: On-chain destination program.
+  - `verification_status`: Bytecode source verification result.
+- **Implementations:**
+  - `CliApprovalHandler`: Renders a formatted terminal modal and reads interactive user input (`[y/N]`).
+  - `UiApprovalHandler`: Bridges prompts asynchronously to Logos Basecamp QML desktop dialogs.
+  - `PolicyApprovalHandler`: Auto-approval policy engine feature-gated behind `#[cfg(feature = "dev-auto-approve")]`. Dedicated CI audit jobs inspect release binaries to guarantee that auto-approval code is physically absent from release builds.
+
+### 4.5 Instruction Decoders & Effect Simulation (`decode/`, `effects.rs`)
+
+Blind signing of raw byte payloads is strictly prohibited:
+
+- **`DecoderRegistry`:** A modular calldata dispatcher inspecting program IDs and decoding raw byte sequences into structured `DecodedInstruction` records:
+  - `NativeDecoder`: Decodes native token transfers (source, destination, amount).
+  - `TokenDecoder`: Decodes fungible token program operations (definition creation, minting, burning, transfer).
+  - `AtaDecoder`: Decodes Associated Token Account creation and initialization.
+  - `TestimonialDecoder`: Decodes testimonial program submissions (`submission_id`, user moniker, testimonial text).
+- **`EffectSimulator`:** Prior to presenting the approval modal, the simulator projects transaction consequences, producing:
+  - `BalanceDiff`: Delta calculations per account (`before`, `after`, `delta`).
+  - `EffectSource`: Provenance tracking (`Simulation`, `DryRun`, or `StaticAnalysis`).
+  - Insufficient fund pre-checks: Aborts with clear errors if sender balance cannot satisfy transfer amounts and gas bounds.
+
+### 4.6 Program Source Verification (`verifier.rs`)
+
+Aligning with the LP-0023 source reproducibility specification, the approval pipeline checks the authenticity of target smart contracts:
+
+- **`VerificationStatus`:**
+  - `Verified { compiler, repo }`: The on-chain bytecode corresponds reproducibly to the source repository at the audited commit.
+  - `NotVerified`: The program is unverified or unregistered.
+  - `NotChecked`: Registry connection unavailable or verification disabled.
+- **`BuiltinVerifier`:** Ships with built-in signatures for canonical testnet programs (Native Token, Wrapped Token, Bridge, Sequencer Stake) to protect users during initial bootstrapping.
+
+### 4.7 Clean-Room Logos Name Service (LNS) Resolver (`resolve/lns.rs`)
+
+The SDK incorporates an independent, clean-room implementation of the Logos Name Service (`SPEC.md v2`) for human-readable `.lez` names:
+
+```
+Input Name: "alice.lez"
+      │
+      ▼ (Phase 1: Normalisation)
+Validate & lowercase: [a-z0-9-]{1,32}
+      │
+      ▼ (Phase 2: Key Derivation)
+Argon2id(password="alice", salt="logos-names/v5/salt", mem=64MiB, passes=3)
+      │
+      ▼
+Master Secret [u8; 32]
+      ├──► Name ID  = SHA-256("logos-names/v5/id"  ‖ Master)
+      └──► Decr Key = SHA-256("logos-names/v5/key" ‖ Master)
+      │
+      ▼ (Phase 3: PDA Calculation)
+PDA Seed = SHA-256("logos-names/v5/pda" ‖ Name ID)
+      │
+      ▼ (Phase 4: Resolution & Cache)
+Check In-Memory Cache (TTL = 300s) ──► Cache Hit: Return cached AccountId
+      │ (Cache Miss)
+Query Sequencer PDA State ──► Return resolved AccountId
+```
+
+- **Cache Invalidation:** The in-memory cache maintains a 5-minute TTL (`DEFAULT_CACHE_TTL`). When the wallet is locked, the cache is completely purged to ensure zero address retention in memory.
+- **Pass-Through Fallback:** If an input string is not a `.lez` domain, the resolver transparently treats it as a raw 32-byte account address.
+
+### 4.8 Crash-Safe Atomic Persistence (`store.rs`)
+
+State durability follows strict POSIX crash-resilience standards:
+
+```
+[In-Memory SdkPersistentState]
+               │
+               ▼ (Step 1: Serialize)
+        JSON Byte Stream
+               │
+               ▼ (Step 2: Atomic Write)
+         Write to `.tmp` file
+               │
+               ▼ (Step 3: Flush to Disk)
+            `file.sync_all()`
+               │
+               ▼ (Step 4: Atomic Rename)
+  `std::fs::rename(.tmp -> target)` (POSIX atomic swap)
+               │
+               ▼ (Step 5: Directory Fsync)
+  `fs::File::open(parent_dir).sync_all()` (Persist directory entry)
+```
+
+- **Backup Redundancy (`.bak`):** Upon each successful write, a mirror backup `<path>.bak` is maintained. If the primary file is corrupted, truncated, or unreadable upon startup, the store automatically attempts recovery from `.bak`.
+
+### 4.9 Identity Accountability & Accountable Pseudonymity (`identity/`)
+
+Adapted from the Evice Labs [`e-identity-stack`](https://github.com/evice-labs/e-identity-stack) research repository, this subsystem implements zero-knowledge accountable pseudonymity directly within `sdk-engine`:
+
+```
+BIP-39 Root Seed (Wallet Mnemonic)
+        │
+        ▼ (HKDF-SHA256: salt="lez/identity/v1/secret", info="IdentityMasterKey")
+IdentityMasterSecret (IdentitySecret, 32 bytes)
+        │
+        ├─────────────────────────────────────────────────┐
+        ▼                                                 ▼
+Identity Commitment (Public)                     Scope-Specific Derivation
+SHA-256("lez/identity/v1/commitment" ‖ Secret)    (Cross-dApp Unlinkable)
+        │                                                 │
+        ▼                                                 ▼
+On-Chain Membership / Registry                   Scoped Nullifier (Governance / Vote / Chamber)
+IdentityCommitment                               SHA-256("lez/identity/v1/scoped_nullifier" ‖ Secret ‖ ScopeId)
+                                                          │
+                                                          ▼
+                                             Two-Tier Shamir Secret Sharing
+                                             P(x) over GF(2^8), deg = K - 1
+                                             P(0) = IdentitySecret
+                                             M Trustee shares encrypted via secp256k1 ECDH
+```
+
+1. **Deterministic Master Derivation (`derivation.rs`):**
+   - Extracts the 32-byte `IdentitySecret` from the BIP-39 root seed phrase via HKDF-SHA256, eliminating the need for users to manage or back up separate identity key files.
+   - Derives the public 32-byte `IdentityCommitment` via `SHA-256("lez/identity/v1/commitment" ‖ IdentitySecret)`.
+2. **Scope-Specific Unlinkable Nullifiers (`derivation.rs`):**
+   - Produces stable pseudonyms within a given scope (e.g., a specific DAO governance chamber or chat room) using `SHA-256("lez/identity/v1/scoped_nullifier" ‖ IdentitySecret ‖ ScopeId)`.
+   - Across different `ScopeId`s, the generated nullifiers are mathematically uncorrelated, preventing third-party tracking across dApps.
+3. **Two-Tier Shamir Secret Sharing over GF($2^8$) (`shamir.rs`):**
+   - Standardized via the battle-tested `sharks` crate over GF($2^8$), maintaining byte-for-byte wire compatibility with accountability trustee nodes.
+   - Splits the 32-byte `IdentitySecret` into $M$ shares with threshold $K$.
+   - Any $K$ shares successfully reconstruct the master secret via Lagrange polynomial interpolation at $x = 0$, while fewer than $K$ shares reveal zero information.
+4. **secp256k1 ECDH & Stream Encryption (`ecdh.rs`):**
+   - Computes shared secrets with designated accountability trustee or guardian x-only public keys.
+   - Encrypts individual threshold shares using a SHA-256 stream keystream for distribution in `RegistrationPayload`.
+5. **BIP-340 Schnorr Attestations (`signature.rs`):**
+   - Derives a deterministic scalar attestation key per scope.
+   - Signs arbitrary messages (e.g., anonymous votes, reputation claims) verified against the scope's public key.
+6. **Granular Permission Integration (`session.rs`, `api.rs`):**
+   - Governed by `GrantKind::IdentityRead` (inspect commitment and derive scoped nullifier) and `GrantKind::IdentityPropose` (sign attestation or construct registration payload).
+   - Informs users with clear consent disclosures prior to identity generation.
+
+## 5. Security & Privacy Model
+
+### 5.1 Threat Mitigations
+
+| Threat Vector | Mitigation Strategy | Component |
+|---|---|---|
+| **Blind Signing** | Instruction decoders convert raw calldata into plain text; `EffectSimulator` pre-calculates balance and state diffs before prompting. | `decode/`, `effects.rs` |
+| **TOCTOU Request Tampering** | Immutable 32-byte SHA-256 intent hashing binds request parameters at creation; verified before execution. | `request.rs` |
+| **Unapproved Private Balance Snooping** | Private/shielded accounts require explicit `GrantKind::Read` authorization per account. | `session.rs` |
+| **State Corruption on Power Failure** | Two-phase atomic write-then-rename with directory fsync and `.bak` snapshot fallback. | `store.rs` |
+| **Compromised Development Auto-Approval** | `PolicyApprovalHandler` is strictly feature-gated; CI workflow runs dedicated symbols check to ensure absence from release builds. | `approval.rs`, `ci-linux.yml` |
+| **Upstream Platform Breaking Changes** | Local synchronization with `logos-execution-zone` `dev` branch with Argon2 storage encryption adapter. | `api.rs`, `store.rs` |
+
+### 5.2 Privacy Guarantees
+
+- **Client-Side Cryptography:** All private keys, Argon2id derivations, and transaction signings occur exclusively within local host memory.
+- **Zero Telemetry:** The SDK does not include any telemetry, analytics, tracking pings, or diagnostic reporting to external servers.
+- **Minimal Sequencer Trust:** The wallet relies on the configured LEZ sequencer solely for broadcasting signed transactions and querying committed state.
+
+## 6. Implementation Status & Incremental Roadmap
+
+Following the project's phased delivery approach, the architecture document reflects factual, currently implemented systems, with future capabilities staged for incremental addition:
+
+### Current Implementation (Core Headless Engine)
+- [x] Three-tier architecture skeleton (`sdk-engine`, `sdk-ffi`, `cli`, `evidence-tool`).
+- [x] In-memory session store with per-account grants (`Read`, `Propose`) and automatic expiration.
+- [x] Immutable request pipeline with deterministic 32-byte SHA-256 intent hashing.
+- [x] Non-blocking asynchronous approval handler trait (`CliApprovalHandler`, `PolicyApprovalHandler`).
+- [x] Calldata instruction decoders for Native, Token, ATA, and Testimonial programs.
+- [x] Pre-execution effect simulator and balance diff projector.
+- [x] Program source verification abstraction conforming to LP-0023.
+- [x] Token facade with 4-direction transfer matrix (public/private combinations).
+- [x] Clean-room Logos Name Service (LNS) `.lez` resolver with Argon2id and caching.
+- [x] Identity Accountability cryptographic primitives (HKDF derivation, scoped nullifiers, Two-Tier Shamir Secret Sharing over GF($2^8$), BIP-340 Schnorr attestations, and secp256k1 ECDH).
+- [x] Crash-safe atomic store with write-then-rename and `.bak` recovery.
+- [x] Automated CI pipelines for Linux and macOS tracking upstream LEZ `dev`.
+
+### Upcoming Incremental Stages
+- [ ] **Full C-ABI FFI Layer (`sdk-ffi`):** Complete `extern "C"` surface with opaque pointer handles, JSON serialization, and error buffer management for Basecamp C++/QML bindings.
+- [ ] **Comprehensive CLI Subcommands (`cli`):** Full dispatch wiring for wallet lifecycle, account management, transfers with `.lez` resolution, and token operations.
+- [ ] **Basecamp Integration & Testimonial Mini-App:** Core and UI Basecamp modules published to catalog, testimonial submission on testnet 0.4.
