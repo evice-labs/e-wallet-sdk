@@ -1,13 +1,31 @@
 //! # LEZ Wallet SDK Engine.
 //!
-//! Foundational engine crate providing LNS resolution and error types.
+//! The core logic layer of the LEZ Wallet SDK. This crate is **pure Rust, no Qt**
+//! and exposes everything needed by the C-ABI FFI (`sdk-ffi`), the CLI, and Basecamp modules.
 
+pub mod api;
+pub mod approval;
+pub mod decode;
+pub mod effects;
 pub mod error;
+pub mod queue;
+pub mod request;
 pub mod resolve;
+pub mod session;
+pub mod store;
+pub mod token_facade;
+pub mod verifier;
 
+// Re-export core types that consumers use constantly.
+pub use api::{DAppApi, OwnerApi, SdkEngine};
+pub use approval::{ApprovalDecision, ApprovalHandler};
 pub use error::SdkError;
-pub use resolve::lns::{LnsConfig, LnsResolver};
-pub use resolve::NameResolver;
+pub use request::{PendingRequest, RequestId, RequestStatus};
+pub use session::{GrantKind, SessionGrant, SessionId};
 
+/// SDK version string, returned by `sdk_info()`.
 pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// API version for capability negotiation .
+/// Frozen at M1; additive-only afterwards.
 pub const API_VERSION: u32 = 1;

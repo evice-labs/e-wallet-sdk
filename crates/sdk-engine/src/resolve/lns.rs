@@ -149,13 +149,13 @@ impl LnsResolver {
         // Derive id
         let mut id_hasher = Sha256::new();
         id_hasher.update(b"logos-names/v5/id");
-        id_hasher.update(&master);
+        id_hasher.update(master);
         let id: [u8; 32] = id_hasher.finalize().into();
 
         // Derive key
         let mut key_hasher = Sha256::new();
         key_hasher.update(b"logos-names/v5/key");
-        key_hasher.update(&master);
+        key_hasher.update(master);
         let key: [u8; 32] = key_hasher.finalize().into();
 
         (id, key)
@@ -186,10 +186,10 @@ impl NameResolver for LnsResolver {
         };
 
         // Check cache
-        if let Some(entry) = self.cache.get(&name) {
-            if entry.is_fresh() {
-                return Ok(Some(entry.result.clone()));
-            }
+        if let Some(entry) = self.cache.get(&name)
+            && entry.is_fresh()
+        {
+            return Ok(Some(entry.result.clone()));
         }
 
         // Derive identifier and decryption key (~100ms due to Argon2id)
