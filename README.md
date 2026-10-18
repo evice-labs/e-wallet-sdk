@@ -4,7 +4,7 @@
 
 ## Overview
 
-Provides the foundational wallet infrastructure, developer SDK, and integration tooling for the Logos Execution Zone (LEZ).
+Provides the foundational wallet infrastructure, developer SDK, and integration tooling for the Logos Execution Zone (LEZ). For comprehensive technical details on the underlying engine, security models, and subsystems, refer to [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 It solves the core challenges of asset custody, dApp communication, and transaction security on LEZ:
 - **Full LEZ Asset & Account Management:** Unified handling of native and token-program assets across both public and private (shielded) accounts.
@@ -29,26 +29,20 @@ e-wallet-sdk/
 │   └── evidence-tool/          # Adoption verification tool for on-chain testimonials
 ├── dev-env/                    # Local development sequencer and genesis accounts
 ├── integration-tests/          # End-to-end integration test suites
-├── docs/                       # Technical specifications and API documentation
+├── docs/                       # Specifications and technical documentation
+│   └── ARCHITECTURE.md         # Comprehensive system architecture & technical specification
 └── .github/workflows/          # Multi-platform CI workflows (Linux & macOS)
 ```
-
-### Crate Roles
-
-| Crate | Responsibility | Dependencies |
-|---|---|---|
-| **`sdk-engine`** | Central orchestrator: sessions, permissions, transaction queue, decoders, effect simulations, LNS resolver, and atomic persistence. | `wallet`, `lee`, `common`, standard crates |
-| **`sdk-ffi`** | Exposes C-ABI (`extern "C"`) functions with opaque handles and JSON serialization, consumed by Basecamp Qt plugins (`wallet-provider`). | `sdk-engine` |
-| **`cli`** | Interactive command-line binary (`lez-wallet`) for headless operations, testing, and scriptable management. | `sdk-engine`, `clap`, `tokio` |
-| **`evidence-tool`** | Scans on-chain testimonial records and outputs adoption statistics filtered by submission identifier. | `wallet`, `common`, `clap` |
 
 ## Implemented Architecture & Features
 
 #### 1. Granular Session & Permission Management (`session.rs`)
 - Connections from external dApps open an isolated, ephemeral in-memory `Session`.
-- Grants are assigned per-account with specific privileges:
+- Grants are assigned per-account and per-capability with specific privileges:
   - `GrantKind::Read`: Permission to inspect balances and program states.
   - `GrantKind::Propose`: Permission to submit transaction proposals for user approval.
+  - `GrantKind::IdentityRead`: Permission to read public identity commitments and derive scoped nullifiers.
+  - `GrantKind::IdentityPropose`: Permission to sign cryptographic attestations and construct threshold registration payloads.
 - Sessions include automatic timestamped expiration (`DEFAULT_SESSION_DURATION`).
 
 #### 2. Immutable Requests & Intent Hashing (`request.rs`)
@@ -84,6 +78,14 @@ e-wallet-sdk/
 - Atomic persistence using write-then-rename (`.tmp` → target file) preventing state corruption during unexpected crashes or power loss.
 - Automatic `.bak` backup retention and fallback recovery.
 
+#### 8. Identity Accountability & Accountable Pseudonymity (`identity/`)
+- Pure client-side zero-knowledge accountable pseudonymity derived from the master BIP-39 root seed (`lez/identity/v1/secret`).
+- Public identity commitments (`SHA-256("lez/identity/v1/commitment" || secret)`) for on-chain governance and community registry membership.
+- Cross-dApp unlinkable scoped nullifiers (`SHA-256("lez/identity/v1/scoped_nullifier" || secret || scope_id)`).
+- BIP-340 Schnorr attestations (`k256::schnorr`) producing 64-byte signatures over arbitrary message payloads.
+- Two-Tier Shamir Secret Sharing (SSS) over GF(2^8) via `sharks` crate, encrypting threshold shares to designated accountability trustees using secp256k1 ECDH with XOR keystream encryption.
+- Memory protection via `ZeroizeOnDrop` and automatic clearing upon wallet lock.
+
 ## Quick Start
 
 ### Prerequisites
@@ -100,7 +102,7 @@ cd e-wallet-sdk
 # Compile all workspace crates
 cargo build
 
-# Run the complete test suite (all 18 unit tests)
+# Run the complete test suite (all 22 unit tests)
 cargo test --workspace
 
 # Check clippy lints
