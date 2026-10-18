@@ -23,7 +23,7 @@ jobs:
         with:
           repository: logos-blockchain/logos-execution-zone
           path: logos-execution-zone
-          ref: dev
+          ref: 85145656c4dd96ac1eadbe7b035b300af8d24c2a
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
