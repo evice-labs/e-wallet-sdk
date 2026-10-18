@@ -44,25 +44,25 @@ e-wallet-sdk/
 
 ## Implemented Architecture & Features
 
-### 1. Granular Session & Permission Management (`session.rs`)
+#### 1. Granular Session & Permission Management (`session.rs`)
 - Connections from external dApps open an isolated, ephemeral in-memory `Session`.
 - Grants are assigned per-account with specific privileges:
   - `GrantKind::Read`: Permission to inspect balances and program states.
   - `GrantKind::Propose`: Permission to submit transaction proposals for user approval.
 - Sessions include automatic timestamped expiration (`DEFAULT_SESSION_DURATION`).
 
-### 2. Immutable Requests & Intent Hashing (`request.rs`)
+#### 2. Immutable Requests & Intent Hashing (`request.rs`)
 - Propose calls (`proposeNativeTransfer`, `proposeTokenTransfer`, `proposeTransaction`) immediately return a `RequestId`.
 - The engine computes a deterministic 32-byte SHA-256 intent hash (`lez-wallet-sdk/intent/v1/`) binding the request ID, session ID, and serialised parameters.
 - The hash is verified before execution, eliminating Time-of-Check to Time-of-Use (TOCTOU) tampering.
 
-### 3. Asynchronous Non-Blocking Approvals (`approval.rs`)
+#### 3. Asynchronous Non-Blocking Approvals (`approval.rs`)
 - The pluggable `ApprovalHandler` trait allows user authorization without blocking UI or async runtimes:
   - `CliApprovalHandler`: Formatted terminal modal prompt reading interactive user input.
   - `UiApprovalHandler`: Bridge routing prompts to Basecamp desktop QML modals.
   - `PolicyApprovalHandler`: Auto-approval policy feature-gated behind `dev-auto-approve` (audited by CI to ensure absence from release builds).
 
-### 4. Instruction Decoders & Effect Simulation (`decode/`, `effects.rs`)
+#### 4. Instruction Decoders & Effect Simulation (`decode/`, `effects.rs`)
 - The `DecoderRegistry` automatically inspects program calldata and converts raw bytes into human-readable operations:
   - Native token transfers.
   - Token program operations (holding creation, mint, burn, transfer).
@@ -70,17 +70,17 @@ e-wallet-sdk/
   - Testimonial program submissions.
 - `EffectSimulator` pre-calculates balance changes and state mutations (`EffectSource::Simulation`), preventing blind signing.
 
-### 5. Program Source Verification (`verifier.rs`)
+#### 5. Program Source Verification (`verifier.rs`)
 - Integrates source-code reproducibility verification based on the LP-0023 registry abstraction.
 - Displays `VerificationStatus::Verified`, `NotVerified`, or `NotChecked` alongside compiler and source repository metadata.
 
-### 6. Clean-Room LNS Resolver (`resolve/lns.rs`)
+#### 6. Clean-Room LNS Resolver (`resolve/lns.rs`)
 - Full, independent implementation of SPEC.md v2 for `.lez` domain resolution.
 - Normalises names (`[a-z0-9-]{1,32}`), derives master keys via Argon2id (64 MiB, 3 passes), and calculates PDA seeds without depending on external binaries.
 - In-memory cache with 5-minute TTL, cleared automatically upon wallet lock.
 - User-controllable toggle (`lns_enabled`) with graceful fallback to raw 32-byte account IDs.
 
-### 7. Resilient Storage (`store.rs`)
+#### 7. Resilient Storage (`store.rs`)
 - Atomic persistence using write-then-rename (`.tmp` → target file) preventing state corruption during unexpected crashes or power loss.
 - Automatic `.bak` backup retention and fallback recovery.
 
@@ -137,6 +137,11 @@ Automated GitHub Actions workflows are configured in `.github/workflows/`:
 - **No Mandatory External Services:** All core wallet functions, key management, and transactions communicate solely with the user's configured LEZ sequencer node.
 - **Client-Side Cryptography:** All private key derivations, Argon2id computations, and transaction signings occur exclusively on the local machine.
 - **Explicit User Consent:** A dApp cannot sign transactions, read private balances, or mutate state without explicit, per-account user authorization.
+
+## Acknowledgments & Attribution
+
+- **Logos Name Service (LNS):** We gratefully acknowledge **Jef** ([@jefdiesel](https://github.com/jefdiesel)) for designing and publishing the open protocol specification for the Logos Name Service ([SPEC.md](https://github.com/jefdiesel/logos-names/blob/main/SPEC.md)) on the Logos Execution Zone. This SDK includes an independent, clean-room Rust implementation of the client-side name resolution protocol (`sdk-engine::resolve::lns`).
+- **Identity Accountability Architecture:** The accountable pseudonymity model, deterministic identity commitments, and threshold accountability primitives are designed by **Evice Labs**, adapted from the [`e-identity-stack`](https://github.com/evice-labs/e-identity-stack) repository for native integration into the Logos Execution Zone.
 
 ## License
 

@@ -103,10 +103,10 @@ impl PersistentStore {
         })?;
 
         // 4. Fsync the directory
-        if let Some(parent) = self.path.parent() {
-            if let Ok(dir) = fs::File::open(parent) {
-                let _ = dir.sync_all();
-            }
+        if let Some(parent) = self.path.parent()
+            && let Ok(dir) = fs::File::open(parent)
+        {
+            let _ = dir.sync_all();
         }
 
         Ok(())

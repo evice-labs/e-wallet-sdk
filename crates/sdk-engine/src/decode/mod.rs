@@ -56,10 +56,10 @@ impl DecoderRegistry {
     /// decoder's result or a raw fallback.
     pub fn decode(&self, program_id: &AccountId, data: &[u8]) -> DecodedInstruction {
         for decoder in &self.decoders {
-            if decoder.program_ids().contains(program_id) {
-                if let Some(decoded) = decoder.decode(program_id, data) {
-                    return decoded;
-                }
+            if decoder.program_ids().contains(program_id)
+                && let Some(decoded) = decoder.decode(program_id, data)
+            {
+                return decoded;
             }
         }
 
