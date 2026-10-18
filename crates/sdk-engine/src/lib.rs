@@ -7,6 +7,7 @@ pub mod api;
 pub mod approval;
 pub mod decode;
 pub mod effects;
+pub mod identity;
 pub mod error;
 pub mod queue;
 pub mod request;
@@ -22,10 +23,11 @@ pub use approval::{ApprovalDecision, ApprovalHandler};
 pub use error::SdkError;
 pub use request::{PendingRequest, RequestId, RequestStatus};
 pub use session::{GrantKind, SessionGrant, SessionId};
+pub use identity::{AttestationPayload, IdentityCommitment, IdentitySecret, RegistrationPayload, ScopedNullifier};
 
 /// SDK version string, returned by `sdk_info()`.
 pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// API version for capability negotiation .
-/// Frozen at M1; additive-only afterwards.
+/// API version for capability negotiation.
+/// Frozen at initial release; additive-only afterwards.
 pub const API_VERSION: u32 = 1;
