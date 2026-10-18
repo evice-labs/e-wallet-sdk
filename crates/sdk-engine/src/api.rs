@@ -476,9 +476,10 @@ impl OwnerApi for SdkEngine {
 
     async fn restore_wallet(&self, mnemonic: &Mnemonic, password: &str) -> SdkResult<()> {
         let mut wallet = self.wallet.lock().await;
-        wallet
-            .restore_storage(mnemonic, password)
-            .map_err(SdkError::Internal)?;
+        wallet.restore_storage(mnemonic);
+        if !password.is_empty() {
+            wallet.set_password(password).map_err(SdkError::Internal)?;
+        }
         wallet.store_persistent_data().map_err(SdkError::Internal)?;
 
         let mut store = self.store.lock().await;
