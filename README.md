@@ -86,6 +86,14 @@ e-wallet-sdk/
 - Two-Tier Shamir Secret Sharing (SSS) over GF(2^8) via `sharks` crate, encrypting threshold shares to designated accountability trustees using secp256k1 ECDH with XOR keystream encryption.
 - Memory protection via `ZeroizeOnDrop` and automatic clearing upon wallet lock.
 
+#### 9. Comprehensive C-ABI FFI & Basecamp Interop Layer (`crates/sdk-ffi`, `include/lez_wallet_sdk.h`)
+- Native C-ABI surface (`extern "C"`) exporting opaque engine handles (`FfiSdkEngine`), built as `cdylib`, `staticlib`, and `rlib`.
+- Panic-safe execution boundary wrapping operations in `catch_unwind` and returning ABI-safe JSON payloads (`{"ok": true, ...}` / `{"ok": false, "error": "..."}`).
+- Non-blocking approval bridge (`FfiApprovalCallback`) supporting synchronous decisions and asynchronous deferred decision submission (`lez_wallet_submit_approval_decision`) for Qt/QML modals.
+- Complete coverage of `OwnerApi`, `DAppApi`, and Identity Accountability APIs.
+- Header generation via `cbindgen` producing [`include/lez_wallet_sdk.h`](include/lez_wallet_sdk.h) with strict C/C++ linkage guards.
+- Explicit memory management with `lez_wallet_free_string`.
+
 ## Quick Start
 
 ### Prerequisites
@@ -102,11 +110,14 @@ cd e-wallet-sdk
 # Compile all workspace crates
 cargo build
 
-# Run the complete test suite (all 22 unit tests)
+# Run the complete test suite (all 24 unit tests across sdk-engine and sdk-ffi)
 cargo test --workspace
 
 # Check clippy lints
-cargo clippy --workspace -- -D warnings
+cargo clippy --workspace --all-targets -- -D warnings
+
+# Re-generate C/C++ header via cbindgen
+cbindgen --config crates/sdk-ffi/cbindgen.toml --crate sdk-ffi --output include/lez_wallet_sdk.h
 ```
 
 ### Running the CLI
