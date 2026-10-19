@@ -9,11 +9,7 @@
 use clap::Parser;
 
 #[derive(Parser)]
-#[command(
-    name = "evidence-tool",
-    version,
-    about = "Adoption evidence tool"
-)]
+#[command(name = "evidence-tool", version, about = "Adoption evidence tool")]
 struct Cli {
     #[arg(long)]
     submission_id: Option<String>,

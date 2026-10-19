@@ -1,0 +1,21 @@
+[package]
+name = "integration-tests"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+sdk-engine.workspace = true
+sdk-ffi.workspace = true
+
+wallet.workspace = true
+lee.workspace = true
+common.workspace = true
+
+tokio.workspace = true
+serde_json.workspace = true
+bip39.workspace = true
+hex.workspace = true
+uuid.workspace = true
+async-trait.workspace = true
