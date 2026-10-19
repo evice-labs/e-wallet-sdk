@@ -348,6 +348,32 @@ To enable seamless, language-agnostic integration with Logos Basecamp desktop pl
 5. **C/C++ Header Generation (`cbindgen`):**
    - Header `include/lez_wallet_sdk.h` is automatically generated from Rust docstrings and function signatures, featuring `#ifdef __cplusplus` guards and standard `#pragma once` header protection.
 
+### 4.11 Command-Line Interface (`crates/cli`, `lez-wallet`)
+
+The `lez-wallet` CLI provides a standalone, production-grade terminal interface interacting directly with the headless `SdkEngine` without external daemon dependencies:
+
+1. **Architecture & Runtime Isolation:**
+   - Structured with `clap` v4 using declarative derive syntax and asynchronous Tokio multi-threaded execution.
+   - Decoupled from host UI frameworks; all operations interface through the standard `OwnerApi` and `DAppApi` contracts.
+2. **Terminal Security & Password Handling (Zero-Echo):**
+   - Integrates `rpassword` (`prompt_password`) for non-echoing terminal inputs, preventing shoulder surfing and terminal scrollback leaks (CWE-522).
+   - Mandatory double-prompt confirmation (`Confirm wallet password: `) during `wallet create` and `wallet restore` to eliminate typographical lockout vulnerabilities.
+   - The `--password` CLI argument is explicitly documented with security warnings advising that command-line arguments are visible in `/proc/<pid>/cmdline` and shell history.
+3. **Storage Guards & Overwrite Protection:**
+   - `ensure_wallet_exists` validator prevents false successes on uninitialized directories.
+   - `wallet create` and `wallet restore` check existing storage, requiring an explicit `--force` flag before allowing re-initialization.
+   - `create_wallet` invokes immediate `store_persistent_data` to ensure file descriptors and cryptographic seeds are committed to disk upon genesis.
+4. **Subcommand Dispatch Matrix:**
+   - **`wallet`**: `create [--force]`, `open`, `restore <mnemonic> [--force]`.
+   - **`account`**: `create-public`, `create-private` (shielded circuit), `list` (inventory table), `balance <account>`.
+   - **`transfer`**: `public`, `shield`, `unshield`, `private`. Enforces non-zero amount checks, self-transfer guards, and privacy type compatibility. Accepts transparent `.lez` LNS destinations.
+   - **`token`**: `create-definition`, `initialize-holding`, `transfer`, `mint`, `burn`, `balance`.
+   - **`resolve <name.lez>`**: Standalone SPEC.md v2 resolver displaying normalised names, Name IDs, PDA seeds, and live sequencer lookup.
+   - **`info`**: Diagnostic environment and wallet status banner.
+5. **Human-Centric UX:**
+   - Mnemonic recovery phrases rendered in a 3-column numbered grid (`1. word   2. word   3. word`), preventing single-line overflow across 12- and 24-word phrases.
+   - Formatted ASCII borders for transaction proposal statuses and account tables.
+
 ## 5. Security & Privacy Model
 
 ### 5.1 Threat Mitigations
@@ -359,7 +385,11 @@ To enable seamless, language-agnostic integration with Logos Basecamp desktop pl
 | **Unapproved Private Balance Snooping** | Private/shielded accounts require explicit `GrantKind::Read` authorization per account. | `session.rs` |
 | **State Corruption on Power Failure** | Two-phase atomic write-then-rename with directory fsync and `.bak` snapshot fallback. | `store.rs` |
 | **Compromised Development Auto-Approval** | `PolicyApprovalHandler` is strictly feature-gated; CI workflow runs dedicated symbols check to ensure absence from release builds. | `approval.rs`, `ci-linux.yml` |
-| **Upstream Platform Breaking Changes** | Local synchronization with `logos-execution-zone` `dev` branch with Argon2 storage encryption adapter. | `api.rs`, `store.rs` |
+| **Upstream Platform Breaking Changes** | Direct Git workspace dependencies tracking `logos-execution-zone` `dev` branch with Argon2 storage encryption adapter. | `Cargo.toml`, `store.rs` |
+| **Terminal Shoulder Surfing / Password Echo** | Terminal echo disabled via `rpassword::prompt_password`; characters never written to stdout or scrollback buffer. | `cli/src/main.rs` |
+| **Typo-Induced Wallet Lockout** | Mandatory two-step password confirmation prompt before initial storage derivation. | `cli/src/main.rs` |
+| **Accidental Storage Overwrite** | Guard checks pre-existing files; requires explicit `--force` flag before re-initializing existing directories. | `cli/src/main.rs` |
+| **False Success on Empty Directory** | `ensure_wallet_exists` enforces storage verification prior to executing wallet/account operations. | `cli/src/main.rs` |
 
 ### 5.2 Privacy Guarantees
 
@@ -385,7 +415,7 @@ Following the project's phased delivery approach, the architecture document refl
 - [x] Crash-safe atomic store with write-then-rename and `.bak` recovery.
 - [x] Automated CI pipelines for Linux and macOS tracking upstream LEZ `dev`.
 - [x] **Full C-ABI FFI Layer (`sdk-ffi`):** Complete `extern "C"` surface with opaque pointer handles (`FfiSdkEngine`), panic-safe JSON serialization (`{"ok": true, ...}` / `{"ok": false, "error": "..."}`), non-blocking approval callback bridge supporting synchronous decisions & asynchronous deferred approvals, memory lifecycle (`lez_wallet_free_string`), and auto-generated C header (`include/lez_wallet_sdk.h`).
+- [x] **Comprehensive CLI Subcommands (`cli`):** Full dispatch wiring for wallet lifecycle (`create`, `open`, `restore`), account management (`create-public`, `create-private`, `list`, `balance`), transfers across 4 directions with transparent `.lez` LNS name resolution and interactive terminal approval modal, and token operations (`create-definition`, `initialize-holding`, `transfer`, `mint`, `burn`, `balance`).
 
 ### Upcoming Incremental Stages
-- [ ] **Comprehensive CLI Subcommands (`cli`):** Full dispatch wiring for wallet lifecycle, account management, transfers with `.lez` resolution, and token operations.
 - [ ] **Basecamp Integration & Testimonial Mini-App:** Core and UI Basecamp modules published to catalog, testimonial submission on testnet 0.4.

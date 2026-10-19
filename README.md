@@ -92,13 +92,19 @@ e-wallet-sdk/
 - Non-blocking approval bridge (`FfiApprovalCallback`) supporting synchronous decisions and asynchronous deferred decision submission (`lez_wallet_submit_approval_decision`) for Qt/QML modals.
 - Complete coverage of `OwnerApi`, `DAppApi`, and Identity Accountability APIs.
 - Header generation via `cbindgen` producing [`include/lez_wallet_sdk.h`](include/lez_wallet_sdk.h) with strict C/C++ linkage guards.
-- Explicit memory management with `lez_wallet_free_string`.
+#### 10. Comprehensive Command-Line Interface (`crates/cli`, `lez-wallet`)
+- Standalone, zero-dependency terminal binary dispatching directly to the headless `SdkEngine` core.
+- **Robust Terminal Security:** Zero-echo password prompting via `rpassword::prompt_password` preventing shoulder surfing and terminal scrollback leaks (CWE-522), mandatory password confirmation on wallet creation/restoration to eliminate typo lockouts, and explicit storage overwrite protection requiring `--force`.
+- **4-Direction Asset Transfers & LNS:** Supports `public`, `shield`, `unshield`, and `private` transfers with non-zero amount validation, account privacy verification, and transparent `.lez` domain resolution.
+- **Interactive Informed Consent:** Terminal approval modal (`CliApprovalHandler`) displaying human-readable operation summaries, simulated balance diffs, and verification status with `--yes` auto-approval support for scripts.
+- **Token Management:** Full support for fungible token definitions, holding initialization, minting, burning, and transfers.
+- **Human-Centric Presentation:** Mnemonic recovery phrases displayed in a clean, numbered 3-column grid (`1. word   2. word   3. word`), preventing line-wrapping across 12- and 24-word phrases.
 
 ## Quick Start
 
 ### Prerequisites
 - **Rust Toolchain:** Pinned to Rust 1.98.1+ via `rust-toolchain.toml`.
-- **LEZ Source:** Local checkout of `logos-execution-zone` accessible in the workspace parent directory.
+- **LEZ Monorepo:** Pinned directly via Cargo Git dependencies tracking `https://github.com/logos-blockchain/logos-execution-zone` (`dev` branch), making the SDK completely standalone without requiring local sibling checkouts.
 
 ### Building & Checking
 
@@ -123,16 +129,29 @@ cbindgen --config crates/sdk-ffi/cbindgen.toml --crate sdk-ffi --output include/
 ### Running the CLI
 
 ```bash
-# Inspect SDK and environment version
+# Display SDK version, API version, and network diagnostics
 cargo run --bin lez-wallet -- info
 
-# Test offline .lez name resolution (normalisation, Argon2id derivation & PDA calculation)
+# Initialize a new wallet with zero-echo password and 24-word recovery phrase
+cargo run --bin lez-wallet -- wallet create
+
+# Derive transparent public and shielded private accounts
+cargo run --bin lez-wallet -- account create-public --label "Alice Public"
+cargo run --bin lez-wallet -- account create-private --label "Bob Shielded"
+
+# List all accounts with privacy types, labels, and balances
+cargo run --bin lez-wallet -- account list
+
+# Propose a transfer (accepts raw account addresses or human-readable .lez names)
+cargo run --bin lez-wallet -- transfer public --from <FROM_ADDR> --to alice.lez --amount 100
+
+# Perform offline clean-room .lez name resolution (Argon2id 64 MiB, 3 passes + PDA calculation)
 cargo run --bin lez-wallet -- resolve alice.lez
 ```
 
 ### Self-Contained Demo
 
-Execute the demo script to verify build integrity, CLI diagnostics, offline name resolution, and submission identifier output:
+Execute the demo script to verify build integrity, C-ABI generation, CLI diagnostics, offline name resolution, and submission identifier output:
 
 ```bash
 ./demo.sh
@@ -142,7 +161,8 @@ Execute the demo script to verify build integrity, CLI diagnostics, offline name
 
 Automated GitHub Actions workflows are configured in `.github/workflows/`:
 - **`ci-linux.yml`:** Runs on `ubuntu-latest` validating `cargo check`, `cargo test`, `cargo clippy`, and verifies the complete absence of test auto-approval symbols (`PolicyApprovalHandler`) in release binaries.
-- **`ci-macos.yml`:** Runs on `macos-latest` ensuring full macOS platform compatibility.
+- **`cli-e2e.yml`:** Builds workspace binaries, executes the complete end-to-end CLI validation suite in an isolated runner environment, and validates `./demo.sh`.
+- **`ci-macos.yml`:** Runs on `macos-latest` ensuring full macOS compilation and test suite compatibility.
 
 ## Security & Privacy Guarantees
 
