@@ -833,6 +833,7 @@ impl OwnerApi for SdkEngine {
 
         let mut wallet = self.wallet.lock().await;
         *wallet = new_wallet;
+        wallet.store_persistent_data().map_err(SdkError::Internal)?;
 
         let mut store = self.store.lock().await;
         let seed = mnemonic.to_seed(password);
