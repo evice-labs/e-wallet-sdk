@@ -15,8 +15,8 @@ sdk-engine.workspace = true
 wallet.workspace = true
 lee.workspace = true
 lee_core.workspace = true
-
 common.workspace = true
+
 clap.workspace = true
 tokio.workspace = true
 anyhow.workspace = true
@@ -24,3 +24,6 @@ env_logger.workspace = true
 hex.workspace = true
 log.workspace = true
 serde_json.workspace = true
+bip39.workspace = true
+async-trait.workspace = true
+rpassword.workspace = true
