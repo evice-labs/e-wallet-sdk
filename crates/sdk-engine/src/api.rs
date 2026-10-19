@@ -100,7 +100,7 @@ pub struct SdkEngine {
 /// dApp-facing API .
 pub trait DAppApi {
     fn sdk_info(&self) -> impl std::future::Future<Output = SdkResult<SdkInfo>> + Send;
-    
+
     fn connect(
         &self,
         caller_identity: String,
@@ -116,12 +116,12 @@ pub trait DAppApi {
         &self,
         session_id: &SessionId,
     ) -> impl std::future::Future<Output = SdkResult<Vec<AccountView>>> + Send;
-    
+
     fn list_accounts(
         &self,
         session_id: &SessionId,
     ) -> impl std::future::Future<Output = SdkResult<Vec<AccountView>>> + Send;
-    
+
     fn get_balance(
         &self,
         session_id: &SessionId,
@@ -229,27 +229,27 @@ pub trait OwnerApi {
     ) -> impl std::future::Future<Output = SdkResult<()>> + Send;
 
     fn lock(&self) -> impl std::future::Future<Output = SdkResult<()>> + Send;
-    
+
     fn unlock(&self, password: &str) -> impl std::future::Future<Output = SdkResult<()>> + Send;
-    
+
     fn create_account_public(
         &self,
         label: Option<String>,
     ) -> impl std::future::Future<Output = SdkResult<AccountId>> + Send;
-    
+
     fn create_account_private(
         &self,
         label: Option<String>,
     ) -> impl std::future::Future<Output = SdkResult<AccountId>> + Send;
-    
+
     fn list_all_accounts(
         &self,
     ) -> impl std::future::Future<Output = SdkResult<Vec<AccountView>>> + Send;
-    
+
     fn list_sessions(
         &self,
     ) -> impl std::future::Future<Output = SdkResult<Vec<crate::session::Session>>> + Send;
-    
+
     fn revoke_session(
         &self,
         session_id: &SessionId,
@@ -886,6 +886,12 @@ impl OwnerApi for SdkEngine {
     }
 
     async fn create_account_public(&self, label: Option<String>) -> SdkResult<AccountId> {
+        {
+            let store = self.store.lock().await;
+            if store.state().locked {
+                return Err(SdkError::WalletLocked);
+            }
+        }
         let mut wallet = self.wallet.lock().await;
         let (account_id, _chain_index) = wallet.create_new_account_public(None);
 
@@ -900,6 +906,12 @@ impl OwnerApi for SdkEngine {
     }
 
     async fn create_account_private(&self, label: Option<String>) -> SdkResult<AccountId> {
+        {
+            let store = self.store.lock().await;
+            if store.state().locked {
+                return Err(SdkError::WalletLocked);
+            }
+        }
         let mut wallet = self.wallet.lock().await;
         let (account_id, _chain_index) = wallet.create_new_account_private(None);
 
@@ -936,7 +948,21 @@ impl OwnerApi for SdkEngine {
             });
         }
 
-        // TODO: Also enumerate private accounts from the key chain
+        let private_accounts = key_chain.private_account_ids();
+        for (account_id, _) in private_accounts {
+            let label_text = wallet
+                .storage()
+                .labels_for_account(AccountIdWithPrivacy::Private(account_id))
+                .next()
+                .map(|l| l.as_ref().to_string());
+            views.push(AccountView {
+                account_id,
+                privacy: AccountPrivacy::Private,
+                label: label_text,
+                balance: None,
+            });
+        }
+
         Ok(views)
     }
 

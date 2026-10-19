@@ -5,7 +5,7 @@
 //! or private receiving keys.
 //!
 //! The [`LnsResolver`] in the `lns` submodule implements the LNS protocol
-//! (SPEC.md v2) via clean-room engineering — no code from
+//! (SPEC.md) via clean-room engineering — no code from
 //! `jefdiesel/logos-names` is imported.
 
 pub mod lns;

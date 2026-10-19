@@ -15,7 +15,9 @@ pub use derivation::{
     derive_identity_commitment, derive_identity_secret, derive_scope_attestation_key,
     derive_scoped_nullifier, prepare_identity_registration, sign_identity_attestation,
 };
-pub use ecdh::{compute_shared_secret, derive_xonly_pubkey, generate_ephemeral_scalar, xor_encrypt};
+pub use ecdh::{
+    compute_shared_secret, derive_xonly_pubkey, generate_ephemeral_scalar, xor_encrypt,
+};
 pub use shamir::{recover_secret, split_secret};
 pub use signature::{sign_schnorr, verify_schnorr};
 pub use types::{
@@ -62,8 +64,8 @@ mod tests {
         let scope = "dao_proposal_42";
         let message = b"I vote YES on proposal 42";
 
-        let attestation = sign_identity_attestation(&secret, scope, message)
-            .expect("Signing attestation failed");
+        let attestation =
+            sign_identity_attestation(&secret, scope, message).expect("Signing attestation failed");
 
         let attestation_sk = derive_scope_attestation_key(&secret, scope);
         let attestation_pk = derive_xonly_pubkey(&attestation_sk);
@@ -91,8 +93,9 @@ mod tests {
         let nodes = vec![node1_pk, node2_pk, node3_pk];
         let k_threshold = 2;
 
-        let payload = prepare_identity_registration(&secret, "governance_registry", &nodes, k_threshold)
-            .expect("Registration preparation failed");
+        let payload =
+            prepare_identity_registration(&secret, "governance_registry", &nodes, k_threshold)
+                .expect("Registration preparation failed");
 
         assert_eq!(payload.encrypted_shares.len(), 3);
         assert_eq!(payload.threshold_k, 2);
@@ -110,7 +113,8 @@ mod tests {
 
         // Recover secret with K=2 shares
         let decrypted_shares = vec![share1, share2];
-        let recovered = recover_secret(&decrypted_shares, k_threshold as u32).expect("Secret recovery failed");
+        let recovered =
+            recover_secret(&decrypted_shares, k_threshold as u32).expect("Secret recovery failed");
 
         assert_eq!(recovered, *secret.as_bytes());
     }

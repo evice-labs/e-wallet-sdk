@@ -8,18 +8,18 @@
 //! - `resolve <name.lez>`
 //! - `info`
 
-use std::path::{Path, PathBuf};
-use std::str::FromStr;
-use std::sync::Arc;
-use std::time::Duration;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use lee::AccountId;
+use sdk_engine::SdkEngine;
 use sdk_engine::api::{AccountPrivacy, DAppApi, OwnerApi, SdkConfig};
 use sdk_engine::approval::{ApprovalDecision, ApprovalHandler, ApprovalPrompt, CliApprovalHandler};
 use sdk_engine::resolve::lns::{LnsConfig, LnsResolver};
 use sdk_engine::session::GrantKind;
-use sdk_engine::SdkEngine;
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
+use std::sync::Arc;
+use std::time::Duration;
 
 #[derive(Parser)]
 #[command(name = "lez-wallet", version, about = "LEZ Wallet SDK CLI")]
@@ -306,7 +306,10 @@ async fn resolve_or_parse_account(engine: &SdkEngine, target: &str) -> Result<Ac
                     println!("[✓] Resolved '{}' -> {}", target, account_id);
                     Ok(account_id)
                 } else {
-                    bail!("LNS name '{}' exists but has no published account address", target)
+                    bail!(
+                        "LNS name '{}' exists but has no published account address",
+                        target
+                    )
                 }
             }
             Err(e) => bail!("Failed to resolve LNS name '{}': {:?}", target, e),
@@ -336,10 +339,14 @@ async fn main() -> Result<()> {
             println!("╠══════════════════════════════════════════════════════════╣");
             println!("║ SDK Version:    {:<40} ║", sdk_engine::SDK_VERSION);
             println!("║ API Version:    {:<40} ║", sdk_engine::API_VERSION);
-            println!("║ Network:        {:<40} ║", "Logos Execution Zone (testnet 0.4)");
+            println!(
+                "║ Network:        {:<40} ║",
+                "Logos Execution Zone (testnet 0.4)"
+            );
             println!("║ Data Dir:       {:<40} ║", data_dir.display());
             let config = SdkConfig::new(data_dir.clone());
-            let wallet_exists = config.wallet_storage_path.exists() || config.sdk_state_path.exists();
+            let wallet_exists =
+                config.wallet_storage_path.exists() || config.sdk_state_path.exists();
             let status_str = if wallet_exists {
                 "Initialized [✓]"
             } else {
@@ -352,7 +359,8 @@ async fn main() -> Result<()> {
         Commands::Wallet { action } => match action {
             WalletAction::Create { force } => {
                 let config = SdkConfig::new(data_dir.clone());
-                if (config.wallet_storage_path.exists() || config.sdk_state_path.exists()) && !force {
+                if (config.wallet_storage_path.exists() || config.sdk_state_path.exists()) && !force
+                {
                     bail!(
                         "Wallet already exists at '{}'. Use 'wallet open' or provide '--force' to overwrite.",
                         data_dir.display()
@@ -365,13 +373,28 @@ async fn main() -> Result<()> {
                     .await
                     .map_err(|e| anyhow::anyhow!("Create wallet error: {:?}", e))?;
 
-                println!("\n[✓] Wallet successfully created at '{}'!", data_dir.display());
-                println!("\n╔══════════════════════════════════════════════════════════════════════════════╗");
-                println!("║                        RECOVERY PHRASE (MNEMONIC)                            ║");
-                println!("╠══════════════════════════════════════════════════════════════════════════════╣");
-                println!("║ Store these words securely offline. Anyone with this phrase can restore      ║");
-                println!("║ your entire wallet and all associated accounts:                              ║");
-                println!("╠══════════════════════════════════════════════════════════════════════════════╣");
+                println!(
+                    "\n[✓] Wallet successfully created at '{}'!",
+                    data_dir.display()
+                );
+                println!(
+                    "\n╔══════════════════════════════════════════════════════════════════════════════╗"
+                );
+                println!(
+                    "║                        RECOVERY PHRASE (MNEMONIC)                            ║"
+                );
+                println!(
+                    "╠══════════════════════════════════════════════════════════════════════════════╣"
+                );
+                println!(
+                    "║ Store these words securely offline. Anyone with this phrase can restore      ║"
+                );
+                println!(
+                    "║ your entire wallet and all associated accounts:                              ║"
+                );
+                println!(
+                    "╠══════════════════════════════════════════════════════════════════════════════╣"
+                );
                 let words: Vec<&str> = mnemonic.words().collect();
                 for (chunk_idx, chunk_words) in words.chunks(3).enumerate() {
                     let mut row_str = String::new();
@@ -381,7 +404,9 @@ async fn main() -> Result<()> {
                     }
                     println!("║   {:<72}   ║", row_str.trim_end());
                 }
-                println!("╚══════════════════════════════════════════════════════════════════════════════╝\n");
+                println!(
+                    "╚══════════════════════════════════════════════════════════════════════════════╝\n"
+                );
             }
             WalletAction::Open => {
                 ensure_wallet_exists(&data_dir)?;
@@ -394,7 +419,8 @@ async fn main() -> Result<()> {
             }
             WalletAction::Restore { mnemonic, force } => {
                 let config = SdkConfig::new(data_dir.clone());
-                if (config.wallet_storage_path.exists() || config.sdk_state_path.exists()) && !force {
+                if (config.wallet_storage_path.exists() || config.sdk_state_path.exists()) && !force
+                {
                     bail!(
                         "Wallet already exists at '{}'. Use '--force' if you intend to overwrite the existing wallet.",
                         data_dir.display()
@@ -451,11 +477,19 @@ async fn main() -> Result<()> {
                         .map_err(|e| anyhow::anyhow!("List accounts error: {:?}", e))?;
 
                     if accounts.is_empty() {
-                        println!("No accounts found. Use 'account create-public' or 'account create-private' to generate one.");
+                        println!(
+                            "No accounts found. Use 'account create-public' or 'account create-private' to generate one."
+                        );
                     } else {
-                        println!("╔═════════╦══════════════════════════════════════════════════════════════════╦══════════════════════╦══════════════════════╗");
-                        println!("║ Privacy ║ Account Address                                                  ║ Label                ║ Balance (LEZ)        ║");
-                        println!("╠═════════╬══════════════════════════════════════════════════════════════════╬══════════════════════╬══════════════════════╣");
+                        println!(
+                            "╔═════════╦══════════════════════════════════════════════════════════════════╦══════════════════════╦══════════════════════╗"
+                        );
+                        println!(
+                            "║ Privacy ║ Account Address                                                  ║ Label                ║ Balance (LEZ)        ║"
+                        );
+                        println!(
+                            "╠═════════╬══════════════════════════════════════════════════════════════════╬══════════════════════╬══════════════════════╣"
+                        );
                         for acc in &accounts {
                             let priv_str = match acc.privacy {
                                 AccountPrivacy::Public => "Public ",
@@ -471,7 +505,9 @@ async fn main() -> Result<()> {
                                 priv_str, acc.account_id, label_str, bal_str
                             );
                         }
-                        println!("╚═════════╩══════════════════════════════════════════════════════════════════╩══════════════════════╩══════════════════════╝");
+                        println!(
+                            "╚═════════╩══════════════════════════════════════════════════════════════════╩══════════════════════╩══════════════════════╝"
+                        );
                         println!("Total Accounts: {}", accounts.len());
                     }
                 }
@@ -502,17 +538,44 @@ async fn main() -> Result<()> {
 
         Commands::Transfer { action } => {
             let (from_str, to_str, amount, dir_name, req_from_privacy) = match action {
-                TransferAction::Public { from, to, amount } => (from, to, amount, "Public -> Public", Some(AccountPrivacy::Public)),
-                TransferAction::Shield { from, to, amount } => (from, to, amount, "Public -> Private (Shield)", Some(AccountPrivacy::Public)),
-                TransferAction::Unshield { from, to, amount } => (from, to, amount, "Private -> Public (Unshield)", Some(AccountPrivacy::Private)),
-                TransferAction::Private { from, to, amount } => (from, to, amount, "Private -> Private", Some(AccountPrivacy::Private)),
+                TransferAction::Public { from, to, amount } => (
+                    from,
+                    to,
+                    amount,
+                    "Public -> Public",
+                    Some(AccountPrivacy::Public),
+                ),
+                TransferAction::Shield { from, to, amount } => (
+                    from,
+                    to,
+                    amount,
+                    "Public -> Private (Shield)",
+                    Some(AccountPrivacy::Public),
+                ),
+                TransferAction::Unshield { from, to, amount } => (
+                    from,
+                    to,
+                    amount,
+                    "Private -> Public (Unshield)",
+                    Some(AccountPrivacy::Private),
+                ),
+                TransferAction::Private { from, to, amount } => (
+                    from,
+                    to,
+                    amount,
+                    "Private -> Private",
+                    Some(AccountPrivacy::Private),
+                ),
             };
 
             if amount == 0 {
                 bail!("Transfer amount must be greater than zero");
             }
             if from_str == to_str {
-                bail!("Source and destination accounts cannot be identical ('{}')", from_str);
+                bail!(
+                    "Source and destination accounts cannot be identical ('{}')",
+                    from_str
+                );
             }
 
             ensure_wallet_exists(&data_dir)?;
@@ -528,7 +591,10 @@ async fn main() -> Result<()> {
             {
                 bail!(
                     "Account '{}' is {:?}, but transfer direction '{}' requires {:?}",
-                    from_id, matching.privacy, dir_name, expected
+                    from_id,
+                    matching.privacy,
+                    dir_name,
+                    expected
                 );
             }
 
@@ -607,7 +673,10 @@ async fn main() -> Result<()> {
                     println!("  Request ID: {}", req_id);
                 }
 
-                TokenAction::InitializeHolding { definition, account } => {
+                TokenAction::InitializeHolding {
+                    definition,
+                    account,
+                } => {
                     if definition == account {
                         bail!("Token definition and holding account cannot be identical");
                     }
@@ -751,7 +820,10 @@ async fn main() -> Result<()> {
                             &session_id,
                             vec![from_id, def_id],
                             vec![],
-                            Some(format!("Burn {} tokens of {} from {}", amount, def_id, from_id)),
+                            Some(format!(
+                                "Burn {} tokens of {} from {}",
+                                amount, def_id, from_id
+                            )),
                         )
                         .await
                         .map_err(|e| anyhow::anyhow!("Propose burn error: {:?}", e))?;
@@ -797,40 +869,57 @@ async fn main() -> Result<()> {
                     let registry = LnsConfig::default().registry_program_id;
 
                     println!("╔══════════════════════════════════════════════════════════╗");
-                    println!("║             LNS NAME RESOLUTION (SPEC.md v2)             ║");
+                    println!("║             LNS NAME RESOLUTION                          ║");
                     println!("╠══════════════════════════════════════════════════════════╣");
                     println!("║ Input Name:   {:<42} ║", name);
                     println!("║ Normalised:   {:<42} ║", normalised);
                     println!("║ Name ID:      {:<42} ║", hex::encode(id));
                     println!("║ PDA Seed:     {:<42} ║", hex::encode(pda_seed));
                     println!("║ Registry ID:  {:<42} ║", registry.to_string());
-                    println!("║ Derivation:   {:<42} ║", "Argon2id (64 MiB, 3 passes) [✓]");
+                    println!(
+                        "║ Derivation:   {:<42} ║",
+                        "Argon2id (64 MiB, 3 passes) [✓]"
+                    );
                     println!("╚══════════════════════════════════════════════════════════╝");
 
                     let config = SdkConfig::new(data_dir.clone());
                     if config.wallet_storage_path.exists() {
-                        let pw = get_password(&cli.password, "Enter wallet password to query sequencer")?;
+                        let pw = get_password(
+                            &cli.password,
+                            "Enter wallet password to query sequencer",
+                        )?;
                         if let Ok(engine) = init_or_open_engine(&data_dir, &pw, handler.clone())
-                            && let Ok(session_id) = engine.connect("lez-wallet-cli".into(), sdk_engine::API_VERSION).await
+                            && let Ok(session_id) = engine
+                                .connect("lez-wallet-cli".into(), sdk_engine::API_VERSION)
+                                .await
                         {
                             match engine.resolve_name(&session_id, &name).await {
                                 Ok(dest) => {
                                     if let Some(addr) = dest.account {
-                                        println!("[✓] Sequencer Online Result: Resolved to address {}", addr);
+                                        println!(
+                                            "[✓] Sequencer Online Result: Resolved to address {}",
+                                            addr
+                                        );
                                     } else {
-                                        println!("[-] Sequencer Online Result: Name record exists but has no published address");
+                                        println!(
+                                            "[-] Sequencer Online Result: Name record exists but has no published address"
+                                        );
                                     }
                                 }
                                 Err(e) => println!("[-] Sequencer Online Query: {:?}", e),
                             }
                         }
                     } else {
-                        println!("(Note: Offline derivation verified. To query sequencer on-chain, initialize wallet first.)");
+                        println!(
+                            "(Note: Offline derivation verified. To query sequencer on-chain, initialize wallet first.)"
+                        );
                     }
                 }
                 None => {
                     eprintln!("Error: '{}' is not a valid .lez name.", name);
-                    eprintln!("Requirements: 1-32 chars of [a-z0-9-], no leading or trailing hyphen.");
+                    eprintln!(
+                        "Requirements: 1-32 chars of [a-z0-9-], no leading or trailing hyphen."
+                    );
                     std::process::exit(1);
                 }
             }

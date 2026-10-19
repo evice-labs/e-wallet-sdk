@@ -15,27 +15,24 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+use async_trait::async_trait;
+use dashmap::DashMap;
+use lee::AccountId;
+use sdk_engine::SdkEngine;
+use sdk_engine::api::{AccountPrivacy, AccountView, DAppApi, OwnerApi, SdkInfo};
+use sdk_engine::approval::{ApprovalDecision, ApprovalHandler, ApprovalPrompt};
+use sdk_engine::request::{RequestId, RequestKind, RequestStatus};
+use sdk_engine::session::{GrantKind, SessionId};
+use serde::Serialize;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::Duration;
-use async_trait::async_trait;
-use dashmap::DashMap;
-use lee::AccountId;
-use serde::Serialize;
 use std::sync::Mutex;
-use sdk_engine::api::{AccountPrivacy, AccountView, DAppApi, OwnerApi, SdkInfo};
-use sdk_engine::approval::{ApprovalDecision, ApprovalHandler, ApprovalPrompt};
-use sdk_engine::request::{RequestId, RequestKind, RequestStatus};
-use sdk_engine::session::{GrantKind, SessionId};
-use sdk_engine::SdkEngine;
+use std::time::Duration;
 
-
-// ============================================================================
-// Opaque Engine Handle & Approval Handler
-// ============================================================================
+// OPAQUE ENGINE HANDLE & APPROVAL HANDLER
 
 /// Callback type for approval prompts in C/C++.
 ///
@@ -43,10 +40,8 @@ use sdk_engine::SdkEngine;
 /// - `1`: Approve immediately
 /// - `0`: Reject immediately
 /// - `-1`: Deferred / async prompt (host will call `lez_wallet_submit_approval_decision`)
-pub type FfiApprovalCallback = unsafe extern "C" fn(
-    prompt_json: *const c_char,
-    user_data: *mut std::ffi::c_void,
-) -> i32;
+pub type FfiApprovalCallback =
+    unsafe extern "C" fn(prompt_json: *const c_char, user_data: *mut std::ffi::c_void) -> i32;
 
 /// Async approval handler bridging Tokio requests to C callbacks and UI dialogs.
 pub struct FfiApprovalHandler {
@@ -93,6 +88,9 @@ impl ApprovalHandler for FfiApprovalHandler {
         let dto = ApprovalPromptDto::from(&prompt);
         let prompt_json = serde_json::to_string(&dto).unwrap_or_else(|_| "{}".to_string());
 
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        self.pending.insert(request_id.clone(), tx);
+
         let cb_opt = {
             let guard = self.callback.lock().unwrap();
             *guard
@@ -102,15 +100,14 @@ impl ApprovalHandler for FfiApprovalHandler {
             let c_str = CString::new(prompt_json).unwrap_or_default();
             let res = unsafe { cb(c_str.as_ptr(), user_data_raw as *mut std::ffi::c_void) };
             if res == 1 {
+                self.pending.remove(&request_id);
                 return ApprovalDecision::Approve;
             } else if res == 0 {
+                self.pending.remove(&request_id);
                 return ApprovalDecision::Reject;
             }
             // -1: deferred, wait for host resolution
         }
-
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        self.pending.insert(request_id.clone(), tx);
 
         match tokio::time::timeout(timeout, rx).await {
             Ok(Ok(decision)) => decision,
@@ -129,9 +126,7 @@ pub struct FfiSdkEngine {
     pub(crate) runtime: tokio::runtime::Runtime,
 }
 
-// ============================================================================
-// Data Transfer Objects (DTOs)
-// ============================================================================
+// DATA TRANSFER OBJECTS (DTOs)
 
 #[derive(Serialize)]
 pub struct SdkInfoDto {
@@ -333,9 +328,7 @@ impl From<&ApprovalPrompt> for ApprovalPromptDto {
     }
 }
 
-// ============================================================================
-// Internal Helper Functions
-// ============================================================================
+// INTERNAL HELPER FUNCTIONS
 
 fn to_c_string(s: &str) -> *mut c_char {
     CString::new(s).unwrap_or_default().into_raw()
@@ -383,11 +376,7 @@ unsafe fn parse_c_str_optional<'a>(ptr: *const c_char) -> Result<Option<&'a str>
     let s = unsafe { CStr::from_ptr(ptr) }
         .to_str()
         .map_err(|_| "Invalid UTF-8 in C string")?;
-    if s.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(s))
-    }
+    if s.is_empty() { Ok(None) } else { Ok(Some(s)) }
 }
 
 fn catch_ffi<F, T>(default: T, f: F) -> T
@@ -397,9 +386,7 @@ where
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or(default)
 }
 
-// ============================================================================
-// Public C-ABI Interface
-// ============================================================================
+// PUBLIC C-ABI INTERFACE
 
 /// Free any string previously returned by a `lez_wallet_*` function.
 #[unsafe(no_mangle)]
@@ -535,9 +522,7 @@ pub unsafe extern "C" fn lez_wallet_submit_approval_decision(
     })
 }
 
-// ============================================================================
-// Privileged Owner API (OwnerApi)
-// ============================================================================
+// PRIVILEGED OWNER API (OwnerApi)
 
 /// Create a fresh wallet encrypted under `password`.
 /// Returns JSON: `{"ok":true, "mnemonic":"word1 word2 ..."}` or `{"ok":false, "error":"..."}`.
@@ -796,19 +781,18 @@ pub unsafe extern "C" fn lez_wallet_set_account_label(
             Err(e) => return error_json(&format!("Invalid account ID: {:?}", e)),
         };
         let ffi = unsafe { &*engine };
-        match ffi
-            .runtime
-            .block_on(ffi.engine.set_account_label(acc, label_str.to_string(), is_private))
-        {
+        match ffi.runtime.block_on(ffi.engine.set_account_label(
+            acc,
+            label_str.to_string(),
+            is_private,
+        )) {
             Ok(_) => success_json(),
             Err(e) => error_json(&format!("{:?}", e)),
         }
     })
 }
 
-// ============================================================================
-// dApp Provider API (DAppApi)
-// ============================================================================
+// DAPP PROVIDER API (DAppApi)
 
 /// Query SDK and network information.
 #[unsafe(no_mangle)]
@@ -1067,10 +1051,12 @@ pub unsafe extern "C" fn lez_wallet_propose_native_transfer(
         };
 
         let ffi = unsafe { &*engine };
-        match ffi
-            .runtime
-            .block_on(ffi.engine.propose_native_transfer(&sid, from, to_str.to_string(), amount))
-        {
+        match ffi.runtime.block_on(ffi.engine.propose_native_transfer(
+            &sid,
+            from,
+            to_str.to_string(),
+            amount,
+        )) {
             Ok(req_id) => {
                 let json = serde_json::json!({
                     "ok": true,
@@ -1138,10 +1124,10 @@ pub unsafe extern "C" fn lez_wallet_propose_token_transfer(
         };
 
         let ffi = unsafe { &*engine };
-        match ffi
-            .runtime
-            .block_on(ffi.engine.propose_token_transfer(&sid, from, to, def, amount))
-        {
+        match ffi.runtime.block_on(
+            ffi.engine
+                .propose_token_transfer(&sid, from, to, def, amount),
+        ) {
             Ok(req_id) => {
                 let json = serde_json::json!({
                     "ok": true,
@@ -1196,7 +1182,9 @@ pub unsafe extern "C" fn lez_wallet_propose_transaction(
         for m in raw_mentions {
             match AccountId::from_str(&m) {
                 Ok(a) => mentions.push(a),
-                Err(e) => return error_json(&format!("Invalid mention account ID '{}': {:?}", m, e)),
+                Err(e) => {
+                    return error_json(&format!("Invalid mention account ID '{}': {:?}", m, e));
+                }
             }
         }
 
@@ -1207,10 +1195,10 @@ pub unsafe extern "C" fn lez_wallet_propose_transaction(
 
         let sid = SessionId(sess_str.to_string());
         let ffi = unsafe { &*engine };
-        match ffi
-            .runtime
-            .block_on(ffi.engine.propose_transaction(&sid, mentions, calldata, desc_opt))
-        {
+        match ffi.runtime.block_on(
+            ffi.engine
+                .propose_transaction(&sid, mentions, calldata, desc_opt),
+        ) {
             Ok(req_id) => {
                 let json = serde_json::json!({
                     "ok": true,
@@ -1291,16 +1279,17 @@ pub unsafe extern "C" fn lez_wallet_resolve_name(
         };
         let sid = SessionId(sess_str.to_string());
         let ffi = unsafe { &*engine };
-        match ffi.runtime.block_on(ffi.engine.resolve_name(&sid, name_str)) {
+        match ffi
+            .runtime
+            .block_on(ffi.engine.resolve_name(&sid, name_str))
+        {
             Ok(dest) => ok_json(&ResolvedDestinationDto::from(&dest)),
             Err(e) => error_json(&format!("{:?}", e)),
         }
     })
 }
 
-// ============================================================================
-// Identity Accountability API
-// ============================================================================
+// IDENTITY ACCOUNTABILITY API
 
 /// Request identity permission grants (`IdentityRead` or `IdentityPropose`).
 #[unsafe(no_mangle)]
@@ -1326,7 +1315,11 @@ pub unsafe extern "C" fn lez_wallet_request_identity_access(
         let kind = match kind_str.to_lowercase().as_str() {
             "identityread" | "read" => GrantKind::IdentityRead,
             "identitypropose" | "propose" => GrantKind::IdentityPropose,
-            _ => return error_json("Invalid identity grant kind (must be 'IdentityRead' or 'IdentityPropose')"),
+            _ => {
+                return error_json(
+                    "Invalid identity grant kind (must be 'IdentityRead' or 'IdentityPropose')",
+                );
+            }
         };
 
         let ffi = unsafe { &*engine };
@@ -1475,10 +1468,10 @@ pub unsafe extern "C" fn lez_wallet_sign_identity_attestation(
 
         let sid = SessionId(sess_str.to_string());
         let ffi = unsafe { &*engine };
-        match ffi
-            .runtime
-            .block_on(ffi.engine.sign_identity_attestation(&sid, scope_str, &msg_bytes))
-        {
+        match ffi.runtime.block_on(
+            ffi.engine
+                .sign_identity_attestation(&sid, scope_str, &msg_bytes),
+        ) {
             Ok(payload) => {
                 let json = serde_json::json!({
                     "ok": true,
@@ -1540,12 +1533,14 @@ pub unsafe extern "C" fn lez_wallet_prepare_identity_registration(
 
         let sid = SessionId(sess_str.to_string());
         let ffi = unsafe { &*engine };
-        match ffi.runtime.block_on(ffi.engine.prepare_identity_registration(
-            &sid,
-            scope_str,
-            &node_pubkeys,
-            threshold_k,
-        )) {
+        match ffi
+            .runtime
+            .block_on(ffi.engine.prepare_identity_registration(
+                &sid,
+                scope_str,
+                &node_pubkeys,
+                threshold_k,
+            )) {
             Ok(reg) => {
                 let shares: Vec<serde_json::Value> = reg
                     .encrypted_shares
@@ -1574,9 +1569,7 @@ pub unsafe extern "C" fn lez_wallet_prepare_identity_registration(
     })
 }
 
-// ============================================================================
-// Unit Tests
-// ============================================================================
+// UNIT TESTS
 
 #[cfg(test)]
 mod tests {
@@ -1596,7 +1589,8 @@ mod tests {
 
     #[test]
     fn test_ffi_engine_lifecycle_and_owner_flows() {
-        let tmp_dir = std::env::temp_dir().join(format!("test_lez_wallet_{}", uuid::Uuid::new_v4()));
+        let tmp_dir =
+            std::env::temp_dir().join(format!("test_lez_wallet_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&tmp_dir);
         let path_str = CString::new(tmp_dir.to_str().unwrap()).unwrap();
 
@@ -1691,6 +1685,200 @@ mod tests {
         unsafe { lez_wallet_free_string(null_ptr) };
 
         // Cleanup
+        unsafe { lez_wallet_engine_free(engine) };
+    }
+
+    unsafe extern "C" fn mock_sync_reject_cb(
+        _prompt_json: *const c_char,
+        _user_data: *mut std::ffi::c_void,
+    ) -> i32 {
+        0 // reject immediately
+    }
+
+    unsafe extern "C" fn mock_deferred_cb(
+        _prompt_json: *const c_char,
+        _user_data: *mut std::ffi::c_void,
+    ) -> i32 {
+        -1 // deferred modal
+    }
+
+    #[test]
+    fn test_ffi_approval_callback_sync_rejection() {
+        let tmp_dir =
+            std::env::temp_dir().join(format!("test_lez_wallet_sync_rej_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&tmp_dir);
+        let path_str = CString::new(tmp_dir.to_str().unwrap()).unwrap();
+
+        let engine = unsafe { lez_wallet_engine_new(path_str.as_ptr()) };
+        assert!(!engine.is_null());
+
+        let cb_res = unsafe {
+            lez_wallet_set_approval_callback(engine, mock_sync_reject_cb, std::ptr::null_mut())
+        };
+        unsafe { lez_wallet_free_string(cb_res) };
+
+        let pass_str = CString::new("testpass123").unwrap();
+        let _ = unsafe { lez_wallet_create_wallet(engine, pass_str.as_ptr()) };
+        let label = CString::new("alice").unwrap();
+        let acc_ptr = unsafe { lez_wallet_create_account_public(engine, label.as_ptr()) };
+        let acc_str = unsafe { CStr::from_ptr(acc_ptr) }.to_str().unwrap();
+        let acc_json: serde_json::Value = serde_json::from_str(acc_str).unwrap();
+        let from_acc = acc_json["account_id"].as_str().unwrap().to_string();
+        unsafe { lez_wallet_free_string(acc_ptr) };
+
+        let label_bob = CString::new("bob").unwrap();
+        let bob_ptr = unsafe { lez_wallet_create_account_public(engine, label_bob.as_ptr()) };
+        let bob_str = unsafe { CStr::from_ptr(bob_ptr) }.to_str().unwrap();
+        let bob_json: serde_json::Value = serde_json::from_str(bob_str).unwrap();
+        let to_acc = bob_json["account_id"].as_str().unwrap().to_string();
+        unsafe { lez_wallet_free_string(bob_ptr) };
+
+        let caller = CString::new("test_dapp").unwrap();
+        let conn_ptr = unsafe { lez_wallet_connect(engine, caller.as_ptr(), 1) };
+        let conn_str = unsafe { CStr::from_ptr(conn_ptr) }.to_str().unwrap();
+        let conn_json: serde_json::Value = serde_json::from_str(conn_str).unwrap();
+        let sid = conn_json["session_id"].as_str().unwrap().to_string();
+        unsafe { lez_wallet_free_string(conn_ptr) };
+
+        let sess_cstr = CString::new(sid).unwrap();
+        let acc_cstr = CString::new(from_acc).unwrap();
+        let grant_cstr = CString::new("propose").unwrap();
+        let g_res = unsafe {
+            lez_wallet_grant_account(
+                engine,
+                sess_cstr.as_ptr(),
+                acc_cstr.as_ptr(),
+                grant_cstr.as_ptr(),
+            )
+        };
+        unsafe { lez_wallet_free_string(g_res) };
+
+        let to_cstr = CString::new(to_acc).unwrap();
+        let amt_cstr = CString::new("500").unwrap();
+        let prop_ptr = unsafe {
+            lez_wallet_propose_native_transfer(
+                engine,
+                sess_cstr.as_ptr(),
+                acc_cstr.as_ptr(),
+                to_cstr.as_ptr(),
+                amt_cstr.as_ptr(),
+            )
+        };
+        let prop_str = unsafe { CStr::from_ptr(prop_ptr) }.to_str().unwrap();
+        let prop_json: serde_json::Value = serde_json::from_str(prop_str).unwrap();
+        assert_eq!(prop_json["ok"], true);
+        let req_id = prop_json["request_id"].as_str().unwrap().to_string();
+        unsafe { lez_wallet_free_string(prop_ptr) };
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let req_cstr = CString::new(req_id).unwrap();
+        let status_ptr = unsafe { lez_wallet_get_request_status(engine, req_cstr.as_ptr()) };
+        let status_str = unsafe { CStr::from_ptr(status_ptr) }.to_str().unwrap();
+        let status_json: serde_json::Value = serde_json::from_str(status_str).unwrap();
+        assert_eq!(status_json["ok"], true);
+        assert_eq!(status_json["status"], "rejected");
+        unsafe { lez_wallet_free_string(status_ptr) };
+
+        unsafe { lez_wallet_engine_free(engine) };
+    }
+
+    #[test]
+    fn test_ffi_approval_callback_async_deferred_resolution() {
+        let tmp_dir = std::env::temp_dir().join(format!(
+            "test_lez_wallet_async_def_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let _ = std::fs::create_dir_all(&tmp_dir);
+        let path_str = CString::new(tmp_dir.to_str().unwrap()).unwrap();
+
+        let engine = unsafe { lez_wallet_engine_new(path_str.as_ptr()) };
+        assert!(!engine.is_null());
+
+        let cb_res = unsafe {
+            lez_wallet_set_approval_callback(engine, mock_deferred_cb, std::ptr::null_mut())
+        };
+        unsafe { lez_wallet_free_string(cb_res) };
+
+        let pass_str = CString::new("testpass123").unwrap();
+        let _ = unsafe { lez_wallet_create_wallet(engine, pass_str.as_ptr()) };
+        let label = CString::new("alice").unwrap();
+        let acc_ptr = unsafe { lez_wallet_create_account_public(engine, label.as_ptr()) };
+        let acc_str = unsafe { CStr::from_ptr(acc_ptr) }.to_str().unwrap();
+        let acc_json: serde_json::Value = serde_json::from_str(acc_str).unwrap();
+        let from_acc = acc_json["account_id"].as_str().unwrap().to_string();
+        unsafe { lez_wallet_free_string(acc_ptr) };
+
+        let label_bob = CString::new("bob").unwrap();
+        let bob_ptr = unsafe { lez_wallet_create_account_public(engine, label_bob.as_ptr()) };
+        let bob_str = unsafe { CStr::from_ptr(bob_ptr) }.to_str().unwrap();
+        let bob_json: serde_json::Value = serde_json::from_str(bob_str).unwrap();
+        let to_acc = bob_json["account_id"].as_str().unwrap().to_string();
+        unsafe { lez_wallet_free_string(bob_ptr) };
+
+        let caller = CString::new("test_dapp").unwrap();
+        let conn_ptr = unsafe { lez_wallet_connect(engine, caller.as_ptr(), 1) };
+        let conn_str = unsafe { CStr::from_ptr(conn_ptr) }.to_str().unwrap();
+        let conn_json: serde_json::Value = serde_json::from_str(conn_str).unwrap();
+        let sid = conn_json["session_id"].as_str().unwrap().to_string();
+        unsafe { lez_wallet_free_string(conn_ptr) };
+
+        let sess_cstr = CString::new(sid).unwrap();
+        let acc_cstr = CString::new(from_acc).unwrap();
+        let grant_cstr = CString::new("propose").unwrap();
+        let g_res = unsafe {
+            lez_wallet_grant_account(
+                engine,
+                sess_cstr.as_ptr(),
+                acc_cstr.as_ptr(),
+                grant_cstr.as_ptr(),
+            )
+        };
+        unsafe { lez_wallet_free_string(g_res) };
+
+        let to_cstr = CString::new(to_acc).unwrap();
+        let amt_cstr = CString::new("1000").unwrap();
+        let prop_ptr = unsafe {
+            lez_wallet_propose_native_transfer(
+                engine,
+                sess_cstr.as_ptr(),
+                acc_cstr.as_ptr(),
+                to_cstr.as_ptr(),
+                amt_cstr.as_ptr(),
+            )
+        };
+        let prop_str = unsafe { CStr::from_ptr(prop_ptr) }.to_str().unwrap();
+        let prop_json: serde_json::Value = serde_json::from_str(prop_str).unwrap();
+        assert_eq!(prop_json["ok"], true);
+        let req_id = prop_json["request_id"].as_str().unwrap().to_string();
+        unsafe { lez_wallet_free_string(prop_ptr) };
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let req_cstr = CString::new(req_id.clone()).unwrap();
+        let status_ptr = unsafe { lez_wallet_get_request_status(engine, req_cstr.as_ptr()) };
+        let status_str = unsafe { CStr::from_ptr(status_ptr) }.to_str().unwrap();
+        let status_json: serde_json::Value = serde_json::from_str(status_str).unwrap();
+        assert_eq!(status_json["ok"], true);
+        assert_eq!(status_json["status"], "pending_approval");
+        unsafe { lez_wallet_free_string(status_ptr) };
+
+        // Host submits decision: 0 (Reject)
+        let dec_ptr = unsafe { lez_wallet_submit_approval_decision(engine, req_cstr.as_ptr(), 0) };
+        let dec_str = unsafe { CStr::from_ptr(dec_ptr) }.to_str().unwrap();
+        let dec_json: serde_json::Value = serde_json::from_str(dec_str).unwrap();
+        assert_eq!(dec_json["ok"], true);
+        unsafe { lez_wallet_free_string(dec_ptr) };
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let status_ptr2 = unsafe { lez_wallet_get_request_status(engine, req_cstr.as_ptr()) };
+        let status_str2 = unsafe { CStr::from_ptr(status_ptr2) }.to_str().unwrap();
+        let status_json2: serde_json::Value = serde_json::from_str(status_str2).unwrap();
+        assert_eq!(status_json2["ok"], true);
+        assert_eq!(status_json2["status"], "rejected");
+        unsafe { lez_wallet_free_string(status_ptr2) };
+
         unsafe { lez_wallet_engine_free(engine) };
     }
 }
