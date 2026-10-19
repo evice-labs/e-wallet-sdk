@@ -30,3 +30,4 @@ jobs:
           workspaces: e-wallet-sdk
       - run: cargo check --workspace
       - run: cargo test --workspace
+      - run: cargo build --workspace --all-targets

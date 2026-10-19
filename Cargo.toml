@@ -15,19 +15,19 @@ repository = "https://github.com/evice-labs/e-wallet-sdk"
 
 [workspace.dependencies]
 # LEZ monorepo crates
-wallet                = { path = "../logos-execution-zone/lez/wallet" }
-lee                   = { path = "../logos-execution-zone/lee/state_machine" }
-lee_core              = { path = "../logos-execution-zone/lee/state_machine/core" }
-common                = { path = "../logos-execution-zone/lez/common" }
-key_protocol          = { path = "../logos-execution-zone/lee/key_protocol" }
-sequencer_service_rpc = { path = "../logos-execution-zone/lez/sequencer/service/rpc", features = ["client"] }
-testnet_initial_state = { path = "../logos-execution-zone/lez/testnet_initial_state" }
-bridge_core           = { path = "../logos-execution-zone/lez/programs/bridge/core" }
-keycard_wallet        = { path = "../logos-execution-zone/lez/keycard_wallet" }
-programs              = { path = "../logos-execution-zone/lez/programs", default-features = false }
-system_accounts       = { path = "../logos-execution-zone/lez/system_accounts" }
-sequencer_stake_core  = { path = "../logos-execution-zone/lez/programs/sequencer_stake/core" }
-program_loader_core   = { path = "../logos-execution-zone/lez/programs/program_loader/core" }
+wallet                = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "wallet" }
+lee                   = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "lee" }
+lee_core              = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "lee_core" }
+common                = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "common" }
+key_protocol          = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "key_protocol" }
+sequencer_service_rpc = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "sequencer_service_rpc", features = ["client"] }
+testnet_initial_state = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "testnet_initial_state" }
+bridge_core           = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "bridge_core" }
+keycard_wallet        = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "keycard_wallet" }
+programs              = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "programs", default-features = false }
+system_accounts       = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "system_accounts" }
+sequencer_stake_core  = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "sequencer_stake_core" }
+program_loader_core   = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "program_loader_core" }
 
 # SDK internal crates
 sdk-engine = { path = "crates/sdk-engine" }
@@ -60,3 +60,4 @@ tokio           = { version = "1.50", features = ["macros", "rt-multi-thread", "
 url             = { version = "2.5.4", features = ["serde"] }
 uuid            = { version = "1", features = ["v4"] }
 zeroize         = "1"
+rpassword       = "7.3"

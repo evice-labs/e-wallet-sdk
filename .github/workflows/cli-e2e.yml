@@ -1,0 +1,87 @@
+name: CLI E2E & Demo Validation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  cli-e2e:
+    name: CLI End-to-End Suite
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: e-wallet-sdk
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: e-wallet-sdk
+      - uses: actions/checkout@v4
+        with:
+          repository: logos-blockchain/logos-execution-zone
+          path: logos-execution-zone
+          ref: dev
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: e-wallet-sdk
+      - name: Build CLI & workspace binaries
+        run: cargo build --workspace --all-targets
+      - name: End-to-end CLI validation suite
+        run: |
+          set -e
+          TEST_DIR=$(mktemp -d)
+          export LEZ_WALLET_PASSWORD="ci_test_secure_password"
+          
+          echo "=== 1. CLI Info ==="
+          cargo run --bin lez-wallet -- --data-dir "$TEST_DIR" info
+
+          echo "=== 2. Verify uninitialized wallet open failure ==="
+          if cargo run --bin lez-wallet -- --data-dir "$TEST_DIR" wallet open 2>/dev/null; then
+            echo "Expected wallet open to fail on uninitialized dir"
+            exit 1
+          fi
+
+          echo "=== 3. Initialize wallet ==="
+          cargo run --bin lez-wallet -- --data-dir "$TEST_DIR" wallet create
+
+          echo "=== 4. Verify duplicate create protection ==="
+          if cargo run --bin lez-wallet -- --data-dir "$TEST_DIR" wallet create 2>/dev/null; then
+            echo "Expected duplicate wallet create without --force to fail"
+            exit 1
+          fi
+
+          echo "=== 5. Unlock wallet ==="
+          cargo run --bin lez-wallet -- --data-dir "$TEST_DIR" wallet open
+
+          echo "=== 6. Create public and private accounts ==="
+          cargo run --bin lez-wallet -- --data-dir "$TEST_DIR" account create-public --label "CI Public"
+          cargo run --bin lez-wallet -- --data-dir "$TEST_DIR" account create-private --label "CI Shielded"
+          cargo run --bin lez-wallet -- --data-dir "$TEST_DIR" account list
+
+          echo "=== 7. Verify LNS name resolution ==="
+          cargo run --bin lez-wallet -- --data-dir "$TEST_DIR" resolve alice.lez
+
+          echo "=== 8. Verify transfer zero amount rejection ==="
+          if cargo run --bin lez-wallet -- --data-dir "$TEST_DIR" transfer public --from 0x1111111111111111111111111111111111111111111111111111111111111111 --to 0x2222222222222222222222222222222222222222222222222222222222222222 --amount 0 2>/dev/null; then
+            echo "Expected zero amount transfer to fail"
+            exit 1
+          fi
+
+          echo "=== 9. Verify self-transfer rejection ==="
+          if cargo run --bin lez-wallet -- --data-dir "$TEST_DIR" transfer public --from 0x1111111111111111111111111111111111111111111111111111111111111111 --to 0x1111111111111111111111111111111111111111111111111111111111111111 --amount 10 2>/dev/null; then
+            echo "Expected self-transfer to fail"
+            exit 1
+          fi
+
+          rm -rf "$TEST_DIR"
+          echo "All CLI validation checks passed successfully!"
+      - name: Run demo & evidence verification
+        run: ./demo.sh
