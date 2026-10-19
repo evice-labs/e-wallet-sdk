@@ -5,7 +5,7 @@ set -euo pipefail
 # Verifies build, CLI info, offline LNS name resolution, and submission identifier.
 # Must succeed from a clean clone, unmodified, on Linux and macOS.
 
-echo "=== LEZ Wallet SDK Demo ==="
+echo "[LEZ WALLET SDK DEMO!]"
 echo ""
 
 # Step 1: Build
@@ -25,4 +25,4 @@ echo "[4/4] Submission ID:"
 cat SUBMISSION_ID
 
 echo ""
-echo "=== Demo complete ==="
+echo "[DEMO COMPLETE!]"

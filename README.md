@@ -1,6 +1,6 @@
-## Evice Wallet SDK
+## LEZ Wallet SDK
 
-> **LEZ Wallet & Provider SDK** — A modular, high-performance wallet engine and dApp integration SDK for the Logos Execution Zone (LEZ).
+> **LEZ Wallet & Provider SDK (by Evice Labs)** — A modular, high-performance wallet engine and dApp integration SDK for the Logos Execution Zone (LEZ).
 
 ## Overview
 
@@ -11,6 +11,7 @@ It solves the core challenges of asset custody, dApp communication, and transact
 - **Wallet Provider SDK:** Robust, asynchronous dApp-facing API enabling external applications to connect, request account access, read balances, and propose transactions.
 - **Informed Consent & Approval UX:** Every transaction proposal produces human-readable instruction summaries, simulated balance/state diffs, and bytecode source verification status before signing.
 - **Privacy-Preserving Name Resolution:** Built-in clean-room resolver for human-readable `.lez` names (Logos Name Service) using off-chain Argon2id key derivation and on-chain PDA lookups.
+- **Client-Side Identity Accountability:** Native accountable pseudonymity featuring master identity commitments, cross-dApp unlinkable scoped nullifiers, BIP-340 Schnorr attestations, and Two-Tier Shamir Secret Sharing (SSS).
 - **Decoupled Three-Layer Architecture:** Pure Rust core logic (`sdk-engine`) with zero GUI dependencies, accessible via C-ABI (`sdk-ffi`) for Logos Basecamp modules and via CLI.
 
 ## Workspace Structure
@@ -18,19 +19,27 @@ It solves the core challenges of asset custody, dApp communication, and transact
 The workspace is structured into specialized, decoupled crates under `crates/`:
 
 ```
-e-wallet-sdk/
+lez-wallet-sdk/
 ├── Cargo.toml                  # Workspace manifest and pinned dependencies
 ├── SUBMISSION_ID               # Unique submission identifier for on-chain testimonials
+├── Dockerfile                  # Multi-stage container build for standalone LEZ sequencer
+├── docker-compose.yml          # Container orchestration runner for local dev-env
+├── Justfile                    # Declarative task runner (just dev-start, dev-health, dev-fund)
 ├── LICENSE-MIT / LICENSE-APACHE
 ├── crates/
 │   ├── sdk-engine/             # Core wallet engine (pure Rust, no Qt)
 │   ├── sdk-ffi/                # C-ABI FFI layer for Basecamp module binding
 │   ├── cli/                    # Command-line interface (`lez-wallet`)
 │   └── evidence-tool/          # Adoption verification tool for on-chain testimonials
-├── dev-env/                    # Local development sequencer and genesis accounts
+├── dev-env/                    # Standalone development environment & genesis fixtures
+│   ├── genesis_accounts.json   # Pre-funded Alice, Bob, and shielded circuit accounts
+│   ├── sequencer_config.json   # Standalone genesis parameters and mock channel config
+│   ├── wallet_config.json      # SDK & CLI RPC connection settings (http://127.0.0.1:3040)
+│   └── README.md               # Standalone development environment guide
 ├── integration-tests/          # End-to-end integration test suites
 ├── docs/                       # Specifications and technical documentation
-│   └── ARCHITECTURE.md         # Comprehensive system architecture & technical specification
+│   ├── ARCHITECTURE.md         # Comprehensive system architecture & technical specification
+│   └── sdk-api-reference.md    # Complete SDK API reference & JSON wire format
 └── .github/workflows/          # Multi-platform CI workflows (Linux & macOS)
 ```
 
@@ -65,11 +74,11 @@ e-wallet-sdk/
 - `EffectSimulator` pre-calculates balance changes and state mutations (`EffectSource::Simulation`), preventing blind signing.
 
 #### 5. Program Source Verification (`verifier.rs`)
-- Integrates source-code reproducibility verification based on the LP-0023 registry abstraction.
+- Integrates source-code reproducibility verification based on reproducible smart contract registry standards.
 - Displays `VerificationStatus::Verified`, `NotVerified`, or `NotChecked` alongside compiler and source repository metadata.
 
 #### 6. Clean-Room LNS Resolver (`resolve/lns.rs`)
-- Full, independent implementation of SPEC.md v2 for `.lez` domain resolution.
+- Full, independent implementation of SPEC.md for `.lez` domain resolution.
 - Normalises names (`[a-z0-9-]{1,32}`), derives master keys via Argon2id (64 MiB, 3 passes), and calculates PDA seeds without depending on external binaries.
 - In-memory cache with 5-minute TTL, cleared automatically upon wallet lock.
 - User-controllable toggle (`lns_enabled`) with graceful fallback to raw 32-byte account IDs.
@@ -92,6 +101,7 @@ e-wallet-sdk/
 - Non-blocking approval bridge (`FfiApprovalCallback`) supporting synchronous decisions and asynchronous deferred decision submission (`lez_wallet_submit_approval_decision`) for Qt/QML modals.
 - Complete coverage of `OwnerApi`, `DAppApi`, and Identity Accountability APIs.
 - Header generation via `cbindgen` producing [`include/lez_wallet_sdk.h`](include/lez_wallet_sdk.h) with strict C/C++ linkage guards.
+
 #### 10. Comprehensive Command-Line Interface (`crates/cli`, `lez-wallet`)
 - Standalone, zero-dependency terminal binary dispatching directly to the headless `SdkEngine` core.
 - **Robust Terminal Security:** Zero-echo password prompting via `rpassword::prompt_password` preventing shoulder surfing and terminal scrollback leaks (CWE-522), mandatory password confirmation on wallet creation/restoration to eliminate typo lockouts, and explicit storage overwrite protection requiring `--force`.
@@ -100,6 +110,13 @@ e-wallet-sdk/
 - **Token Management:** Full support for fungible token definitions, holding initialization, minting, burning, and transfers.
 - **Human-Centric Presentation:** Mnemonic recovery phrases displayed in a clean, numbered 3-column grid (`1. word   2. word   3. word`), preventing line-wrapping across 12- and 24-word phrases.
 
+#### 11. Standalone Development Environment (`dev-env`, Docker, Justfile)
+- **Containerized LEZ Sequencer:** Multi-stage `Dockerfile` packaging an authentic `sequencer_service` running in `--features standalone` mode with an in-memory mocked Bedrock L1 layer.
+- **Fast Proving Execution:** Operates under `RISC0_DEV_MODE=1` producing transaction validation and state commitments in milliseconds without zkVM STARK proving latency.
+- **Zero Faucet Dependency:** Pre-funded genesis accounts ([`genesis_accounts.json`](dev-env/genesis_accounts.json)) with Alice (dispenser, 10T units) and Bob (counterparty, 20T units), plus shielded pools, insulating local development from external network conditions.
+- **Task Runner Orchestration:** Unified commands in root [`Justfile`](Justfile) (`just dev-start`, `just dev-stop`, `just dev-health`, `just dev-logs`, `just dev-fund`, `just dev-clean`) and root [`docker-compose.yml`](docker-compose.yml).
+- **Comprehensive Documentation:** Full setup, account tables, and operational workflows documented in [`dev-env/README.md`](dev-env/README.md).
+
 ## Quick Start
 
 ### Prerequisites
@@ -107,24 +124,55 @@ e-wallet-sdk/
 - **LEZ Monorepo:** Pinned directly via Cargo Git dependencies tracking `https://github.com/logos-blockchain/logos-execution-zone` (`dev` branch), making the SDK completely standalone without requiring local sibling checkouts.
 
 ### Building & Checking
+Commands can be run via the [`Justfile`](Justfile) task runner or directly with `cargo`:
 
 ```bash
 # Clone the repository
-git clone https://github.com/evice-labs/e-wallet-sdk.git
-cd e-wallet-sdk
+git clone https://github.com/evice-labs/lez-wallet-sdk.git
+cd lez-wallet-sdk
 
-# Compile all workspace crates
+# Using Just task runner
+just build            # Compile all workspace crates
+just test             # Run full test suite (all 30 tests across engine, ffi, and integration-tests)
+just lint             # Check clippy lints with warnings as errors
+just header           # Generate C/C++ FFI header via cbindgen
+
+# Or using standard Cargo directly
 cargo build
-
-# Run the complete test suite (all 24 unit tests across sdk-engine and sdk-ffi)
 cargo test --workspace
-
-# Check clippy lints
 cargo clippy --workspace --all-targets -- -D warnings
-
-# Re-generate C/C++ header via cbindgen
-cbindgen --config crates/sdk-ffi/cbindgen.toml --crate sdk-ffi --output include/lez_wallet_sdk.h
 ```
+
+### Standalone Development Environment (Local Sequencer)
+
+Run an authentic LEZ sequencer locally with zero external network dependency and pre-funded genesis accounts:
+
+```bash
+# Start standalone sequencer in background via Docker Compose
+just dev-start        # or: docker compose up -d
+
+# Verify JSON-RPC health probe (http://127.0.0.1:3040)
+just dev-health
+
+# Stream live sequencer container logs
+just dev-logs
+
+# Disburse initial funds from Genesis Alice to an account address or .lez name
+just dev-fund Public/891ae258f92ca8447af6cf09c41d96b3a06187d098b91ab2cc17b42e3c4a2fa1 10000000
+
+# Stop the local sequencer
+just dev-stop         # or: docker compose down
+
+# Wipe sequencer data to reset genesis state
+just dev-clean
+```
+
+For developer workstations without a Docker daemon, launch directly via native Cargo:
+```bash
+just dev-native-start
+```
+
+See [`dev-env/README.md`](dev-env/README.md) for full architectural details, pre-funded key tables, and configuration options.
 
 ### Running the CLI
 
