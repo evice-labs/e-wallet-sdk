@@ -1,0 +1,43 @@
+{
+  "description": "Pre-funded Genesis Accounts fixture for LEZ Wallet SDK development and automated testing",
+  "network": "standalone-dev",
+  "sequencer_rpc": "http://127.0.0.1:3040",
+  "accounts": {
+    "public": [
+      {
+        "alias": "alice (Primary Genesis Funder)",
+        "account_id": "Public/6aa4c365699b89d963ef85a59868b9612b6001f90750b4970662a62776332e81",
+        "public_key_hex": "6aa4c365699b89d963ef85a59868b9612b6001f90750b4970662a62776332e81",
+        "private_key_hex": "7f273098f25b71e6c005a9519f2678da8d1c7f01f6a27778e2d9948abdf901fb",
+        "initial_balance_units": "10000000000000",
+        "role": "Genesis Funder & Test Dispenser"
+      },
+      {
+        "alias": "bob (Secondary Genesis Account)",
+        "account_id": "Public/891ae258f92ca8447af6cf09c41d96b3a06187d098b91ab2cc17b42e3c4a2fa1",
+        "public_key_hex": "891ae258f92ca8447af6cf09c41d96b3a06187d098b91ab2cc17b42e3c4a2fa1",
+        "private_key_hex": "f434f8741720014586ae43356d2aec6257da086222f604ddb75d69733b86fc4c",
+        "initial_balance_units": "20000000000000",
+        "role": "Secondary Counterparty"
+      }
+    ],
+    "private": [
+      {
+        "alias": "shielded-account-1",
+        "address": "44KVvzvh2ephQU9aR5snboGUXKgS1FnPYh1W4KZKwmhm",
+        "initial_balance_units": "10000000000000",
+        "role": "Pre-funded Shielded Pool Account 1"
+      },
+      {
+        "alias": "shielded-account-2",
+        "address": "478hD6LXFTYu5gRRkWkCyXPRsWgCwAfRredoCUfxr5b9",
+        "initial_balance_units": "20000000000000",
+        "role": "Pre-funded Shielded Pool Account 2"
+      }
+    ]
+  },
+  "mock_bedrock": {
+    "funding_public_key_hex": "2e03b2eff5a45478e7e79668d2a146cf2c5c7925bce927f2b1c67f2ab4fc0d26",
+    "channel_id": "0101010101010101010101010101010101010101010101010101010101010101"
+  }
+}
