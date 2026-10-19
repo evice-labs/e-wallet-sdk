@@ -39,7 +39,7 @@ e-wallet-sdk/
 | Crate | Responsibility | Public Interface | Key Dependencies |
 |---|---|---|---|
 | **`sdk-engine`** | Central orchestrator, session/grant store, transaction pipeline, decoders, effect simulations, LNS resolver, identity accountability (HKDF, BIP-340 Schnorr, Two-Tier SSS), atomic persistence, and token facade. | `DAppApi`, `OwnerApi`, `SdkEngine`, `ApprovalHandler` | `wallet`, `lee`, `common`, `tokio`, `argon2`, `sha2`, `k256`, `sharks` |
-| **`sdk-ffi`** | Exposes C-ABI (`extern "C"`) functions with opaque handles and JSON serialization for Logos Basecamp desktop plugins (`wallet-provider`). | `lez_sdk_version()`, `lez_sdk_api_version()` | `sdk-engine`, `serde_json`, `cbindgen` |
+| **`sdk-ffi`** | Exposes C-ABI (`extern "C"`) functions with opaque handles, JSON serialization, and non-blocking approval callback bridge for Logos Basecamp desktop plugins (`wallet-provider`). | `lez_wallet_engine_new()`, `lez_wallet_engine_free()`, `lez_wallet_set_approval_callback()`, `OwnerApi`, `DAppApi`, Identity Accountability, and `include/lez_wallet_sdk.h` | `sdk-engine`, `serde_json`, `cbindgen`, `dashmap`, `tokio` |
 | **`cli`** | Interactive command-line binary (`lez-wallet`) for headless operations, scripting, local testing, and offline address resolution. | Command-line interface via `clap` | `sdk-engine`, `tokio`, `clap`, `env_logger` |
 | **`evidence-tool`** | Scans on-chain testimonial records from testnet sequencer, filtering by `submission_id` to verify distinct accounts and temporal dispersion. | Command-line audit utility | `wallet`, `common`, `clap`, `tokio` |
 
@@ -327,6 +327,27 @@ IdentityCommitment                               SHA-256("lez/identity/v1/scoped
    - Governed by `GrantKind::IdentityRead` (inspect commitment and derive scoped nullifier) and `GrantKind::IdentityPropose` (sign attestation or construct registration payload).
    - Informs users with clear consent disclosures prior to identity generation.
 
+### 4.10 C-ABI FFI & Host Interop Layer (`crates/sdk-ffi`, `include/lez_wallet_sdk.h`)
+
+To enable seamless, language-agnostic integration with Logos Basecamp desktop plugins (`wallet-provider`) and third-party native applications without compromising Rust's memory safety guarantees, the `sdk-ffi` crate exposes a pure C-ABI surface:
+
+1. **Opaque Engine Handle (`FfiSdkEngine`):**
+   - Encapsulates the thread-safe `Arc<SdkEngine>`, an internal multi-threaded Tokio runtime, and the approval router.
+   - Pointers (`*mut FfiSdkEngine`) are strictly managed and validated with null-pointer checks before dereferencing.
+2. **Panic Safety & Wire Serialization:**
+   - All C-callable entrypoints wrap execution in `std::panic::catch_unwind(AssertUnwindSafe(...))` to guarantee panics never cross the C-ABI boundary.
+   - Structured data payloads are serialized as UTF-8 JSON C strings (`*mut c_char`) with a unified response envelope:
+     - Success: `{"ok": true, ...}`
+     - Failure: `{"ok": false, "error": "Human-readable error description"}`
+3. **Approval Callback & Deferred Decision Bridge:**
+   - Registers a non-blocking C callback `FfiApprovalCallback(prompt_json, user_data)`.
+   - Supports both synchronous immediate decisions (`1` = Approve, `0` = Reject) and asynchronous deferred decisions (`-1` = Deferred).
+   - In deferred mode, the host UI (e.g. Qt/QML modal) can display detailed diffs and later submit the decision asynchronously via `lez_wallet_submit_approval_decision(engine, request_id, decision)`.
+4. **Deterministic Memory Cleanup:**
+   - All string buffers allocated by the Rust runtime must be released by the caller via `lez_wallet_free_string(ptr)`.
+5. **C/C++ Header Generation (`cbindgen`):**
+   - Header `include/lez_wallet_sdk.h` is automatically generated from Rust docstrings and function signatures, featuring `#ifdef __cplusplus` guards and standard `#pragma once` header protection.
+
 ## 5. Security & Privacy Model
 
 ### 5.1 Threat Mitigations
@@ -350,11 +371,11 @@ IdentityCommitment                               SHA-256("lez/identity/v1/scoped
 
 Following the project's phased delivery approach, the architecture document reflects factual, currently implemented systems, with future capabilities staged for incremental addition:
 
-### Current Implementation (Core Headless Engine)
+### Current Implementation (Core Headless Engine & FFI Layer)
 - [x] Three-tier architecture skeleton (`sdk-engine`, `sdk-ffi`, `cli`, `evidence-tool`).
-- [x] In-memory session store with per-account grants (`Read`, `Propose`) and automatic expiration.
+- [x] In-memory session store with per-account grants (`Read`, `Propose`, `IdentityRead`, `IdentityPropose`) and automatic expiration.
 - [x] Immutable request pipeline with deterministic 32-byte SHA-256 intent hashing.
-- [x] Non-blocking asynchronous approval handler trait (`CliApprovalHandler`, `PolicyApprovalHandler`).
+- [x] Non-blocking asynchronous approval handler trait (`CliApprovalHandler`, `PolicyApprovalHandler`, `FfiApprovalHandler`).
 - [x] Calldata instruction decoders for Native, Token, ATA, and Testimonial programs.
 - [x] Pre-execution effect simulator and balance diff projector.
 - [x] Program source verification abstraction conforming to LP-0023.
@@ -363,8 +384,8 @@ Following the project's phased delivery approach, the architecture document refl
 - [x] Identity Accountability cryptographic primitives (HKDF derivation, scoped nullifiers, Two-Tier Shamir Secret Sharing over GF($2^8$), BIP-340 Schnorr attestations, and secp256k1 ECDH).
 - [x] Crash-safe atomic store with write-then-rename and `.bak` recovery.
 - [x] Automated CI pipelines for Linux and macOS tracking upstream LEZ `dev`.
+- [x] **Full C-ABI FFI Layer (`sdk-ffi`):** Complete `extern "C"` surface with opaque pointer handles (`FfiSdkEngine`), panic-safe JSON serialization (`{"ok": true, ...}` / `{"ok": false, "error": "..."}`), non-blocking approval callback bridge supporting synchronous decisions & asynchronous deferred approvals, memory lifecycle (`lez_wallet_free_string`), and auto-generated C header (`include/lez_wallet_sdk.h`).
 
 ### Upcoming Incremental Stages
-- [ ] **Full C-ABI FFI Layer (`sdk-ffi`):** Complete `extern "C"` surface with opaque pointer handles, JSON serialization, and error buffer management for Basecamp C++/QML bindings.
 - [ ] **Comprehensive CLI Subcommands (`cli`):** Full dispatch wiring for wallet lifecycle, account management, transfers with `.lez` resolution, and token operations.
 - [ ] **Basecamp Integration & Testimonial Mini-App:** Core and UI Basecamp modules published to catalog, testimonial submission on testnet 0.4.

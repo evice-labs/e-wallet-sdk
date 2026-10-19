@@ -136,6 +136,23 @@ pub trait DAppApi {
         amount: u128,
     ) -> impl std::future::Future<Output = SdkResult<RequestId>> + Send;
 
+    fn propose_token_transfer(
+        &self,
+        session_id: &SessionId,
+        from_holding: AccountId,
+        to_holding: AccountId,
+        definition: AccountId,
+        amount: u128,
+    ) -> impl std::future::Future<Output = SdkResult<RequestId>> + Send;
+
+    fn propose_transaction(
+        &self,
+        session_id: &SessionId,
+        mentions: Vec<AccountId>,
+        calldata: Vec<u8>,
+        description: Option<String>,
+    ) -> impl std::future::Future<Output = SdkResult<RequestId>> + Send;
+
     fn get_request_status(
         &self,
         request_id: &RequestId,
@@ -324,6 +341,91 @@ impl SdkEngine {
             Err(e) => Err(SdkError::NameResolutionError(e.to_string())),
         }
     }
+
+    pub fn open_or_init(
+        data_dir: PathBuf,
+        password: &str,
+        approval_handler: Arc<dyn ApprovalHandler>,
+    ) -> SdkResult<Self> {
+        let config = SdkConfig::new(data_dir.clone());
+        if !data_dir.exists() {
+            std::fs::create_dir_all(&data_dir).map_err(|e| SdkError::Internal(e.into()))?;
+        }
+        let wallet = if config.wallet_storage_path.exists() {
+            WalletCore::new_update_chain(
+                config.wallet_config_path.clone(),
+                config.wallet_storage_path.clone(),
+                None,
+                password,
+            )
+            .map_err(SdkError::Internal)?
+        } else {
+            let (wallet, _mnemonic) = WalletCore::new_init_storage(
+                config.wallet_config_path.clone(),
+                config.wallet_storage_path.clone(),
+                None,
+                password,
+            )
+            .map_err(SdkError::Internal)?;
+            wallet
+        };
+
+        Self::new(wallet, approval_handler, config)
+    }
+
+    pub async fn grant_account(
+        &self,
+        session_id: &SessionId,
+        account: AccountId,
+        kind: GrantKind,
+    ) -> SdkResult<()> {
+        self.sessions
+            .update(session_id, |s| {
+                s.add_grant(account, kind);
+            })
+            .await
+            .ok_or_else(|| SdkError::SessionNotFound(session_id.clone()))?;
+        Ok(())
+    }
+
+    pub async fn set_account_label(
+        &self,
+        account: AccountId,
+        label: String,
+        is_private: bool,
+    ) -> SdkResult<()> {
+        let mut wallet = self.wallet.lock().await;
+        let privacy_account = if is_private {
+            AccountIdWithPrivacy::Private(account)
+        } else {
+            AccountIdWithPrivacy::Public(account)
+        };
+        let _ = wallet
+            .storage_mut()
+            .add_label(Label::new(label), privacy_account);
+        wallet.store_persistent_data().map_err(SdkError::Internal)?;
+        Ok(())
+    }
+
+    pub fn sessions(&self) -> &SessionStore {
+        &self.sessions
+    }
+
+    pub fn requests(&self) -> &RequestStore {
+        &self.requests
+    }
+
+    pub fn approval_handler(&self) -> &Arc<dyn ApprovalHandler> {
+        &self.approval_handler
+    }
+
+    pub fn wallet(&self) -> &Arc<Mutex<WalletCore>> {
+        &self.wallet
+    }
+
+    pub fn config(&self) -> &SdkConfig {
+        &self.config
+    }
 }
 
 impl DAppApi for SdkEngine {
@@ -472,6 +574,138 @@ impl DAppApi for SdkEngine {
                                 .await;
                         }
                     }
+                }
+                ApprovalDecision::Reject => {
+                    requests.set_status(&rid, RequestStatus::Rejected).await;
+                }
+            }
+        });
+
+        Ok(request_id)
+    }
+
+    async fn propose_token_transfer(
+        &self,
+        session_id: &SessionId,
+        from_holding: AccountId,
+        to_holding: AccountId,
+        definition: AccountId,
+        amount: u128,
+    ) -> SdkResult<RequestId> {
+        self.require_grant(session_id, &from_holding, GrantKind::Propose)
+            .await?;
+
+        let request = PendingRequest::new(
+            session_id.clone(),
+            RequestKind::TokenTransfer {
+                from_holding,
+                to_holding,
+                definition,
+                amount,
+            },
+        );
+        let request_id = request.id.clone();
+
+        let summary = ApprovalPrompt::auto_summary(&request);
+        let effects = EffectSimulator::token_transfer(
+            from_holding,
+            to_holding,
+            definition,
+            amount,
+            wallet::DEFAULT_GAS_LIMIT,
+        );
+
+        let prompt = ApprovalPrompt {
+            request: request.clone(),
+            summary,
+            dapp_identity: self
+                .sessions
+                .get(session_id)
+                .await
+                .map(|s| s.caller_identity.clone())
+                .unwrap_or_else(|| "unknown".into()),
+            effects: Some(format!("{:?}", effects.source)),
+            verification_status: None,
+            warnings: effects.warnings,
+        };
+
+        self.requests.insert(request).await;
+
+        let handler = self.approval_handler.clone();
+        let requests = self.requests.clone();
+        let rid = request_id.clone();
+        let timeout = self.config.approval_timeout;
+
+        tokio::spawn(async move {
+            let decision = handler.request_approval(prompt, timeout).await;
+            match decision {
+                ApprovalDecision::Approve => {
+                    requests.set_status(&rid, RequestStatus::Approved).await;
+                }
+                ApprovalDecision::Reject => {
+                    requests.set_status(&rid, RequestStatus::Rejected).await;
+                }
+            }
+        });
+
+        Ok(request_id)
+    }
+
+    async fn propose_transaction(
+        &self,
+        session_id: &SessionId,
+        mentions: Vec<AccountId>,
+        calldata: Vec<u8>,
+        description: Option<String>,
+    ) -> SdkResult<RequestId> {
+        if let Some(primary) = mentions.first() {
+            self.require_grant(session_id, primary, GrantKind::Propose)
+                .await?;
+        } else {
+            return Err(SdkError::InvalidArgument(
+                "Transaction must mention at least one account".into(),
+            ));
+        }
+
+        let request = PendingRequest::new(
+            session_id.clone(),
+            RequestKind::GenericCall {
+                mentions,
+                calldata,
+                description,
+            },
+        );
+        let request_id = request.id.clone();
+
+        let summary = ApprovalPrompt::auto_summary(&request);
+        let effects = EffectSimulator::unavailable(wallet::DEFAULT_GAS_LIMIT);
+
+        let prompt = ApprovalPrompt {
+            request: request.clone(),
+            summary,
+            dapp_identity: self
+                .sessions
+                .get(session_id)
+                .await
+                .map(|s| s.caller_identity.clone())
+                .unwrap_or_else(|| "unknown".into()),
+            effects: Some(format!("{:?}", effects.source)),
+            verification_status: None,
+            warnings: effects.warnings,
+        };
+
+        self.requests.insert(request).await;
+
+        let handler = self.approval_handler.clone();
+        let requests = self.requests.clone();
+        let rid = request_id.clone();
+        let timeout = self.config.approval_timeout;
+
+        tokio::spawn(async move {
+            let decision = handler.request_approval(prompt, timeout).await;
+            match decision {
+                ApprovalDecision::Approve => {
+                    requests.set_status(&rid, RequestStatus::Approved).await;
                 }
                 ApprovalDecision::Reject => {
                     requests.set_status(&rid, RequestStatus::Rejected).await;
