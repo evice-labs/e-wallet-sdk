@@ -1,0 +1,15 @@
+{
+  "network": "standalone",
+  "sequencer_rpc": "http://127.0.0.1:3040",
+  "testimonial_program_header": null,
+  "networks": {
+    "standalone": {
+      "sequencer_rpc": "http://127.0.0.1:3040",
+      "testimonial_program_header": null
+    },
+    "testnet": {
+      "sequencer_rpc": "https://testnet.lez.logos.co",
+      "testimonial_program_header": null
+    }
+  }
+}

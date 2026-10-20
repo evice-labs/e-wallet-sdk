@@ -30,7 +30,9 @@ lez-wallet-sdk/
 │   ├── sdk-engine/             # Core wallet engine (pure Rust, no Qt)
 │   ├── sdk-ffi/                # C-ABI FFI layer for Basecamp module binding
 │   ├── cli/                    # Command-line interface (`lez-wallet`)
+│   ├── testimonial-program/    # On-chain testimonial smart contract (RISC-V zkVM guest)
 │   └── evidence-tool/          # Adoption verification tool for on-chain testimonials
+├── deployments.json            # On-chain program deployment registry (testnet 0.4 & dev-env)
 ├── dev-env/                    # Standalone development environment & genesis fixtures
 │   ├── genesis_accounts.json   # Pre-funded Alice, Bob, and shielded circuit accounts
 │   ├── sequencer_config.json   # Standalone genesis parameters and mock channel config

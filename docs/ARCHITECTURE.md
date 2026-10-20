@@ -30,7 +30,9 @@ lez-wallet-sdk/
 │   ├── sdk-engine/             # Core headless wallet engine (pure Rust)
 │   ├── sdk-ffi/                # C-ABI export layer for Basecamp Qt integration
 │   ├── cli/                    # Headless CLI binary (`lez-wallet`)
+│   ├── testimonial-program/    # On-chain testimonial smart contract (RISC-V zkVM guest)
 │   └── evidence-tool/          # On-chain testimonial adoption audit utility
+├── deployments.json            # On-chain program deployment registry (testnet 0.4 & dev-env)
 ├── dev-env/                    # Standalone sequencer configuration and genesis fixtures
 │   ├── genesis_accounts.json   # Pre-funded Alice, Bob, and shielded circuit accounts
 │   ├── sequencer_config.json   # Standalone genesis parameters and mock channel config
@@ -50,6 +52,7 @@ lez-wallet-sdk/
 | **`sdk-engine`** | Central orchestrator, session/grant store, transaction pipeline, decoders, effect simulations, LNS resolver, identity accountability (HKDF, BIP-340 Schnorr, Two-Tier SSS), atomic persistence, and token facade. | `DAppApi`, `OwnerApi`, `SdkEngine`, `ApprovalHandler` | `wallet`, `lee`, `common`, `tokio`, `argon2`, `sha2`, `k256`, `sharks` |
 | **`sdk-ffi`** | Exposes C-ABI (`extern "C"`) functions with opaque handles, JSON serialization, and non-blocking approval callback bridge for Logos Basecamp desktop plugins (`wallet-provider`). | `lez_wallet_engine_new()`, `lez_wallet_engine_free()`, `lez_wallet_set_approval_callback()`, `OwnerApi`, `DAppApi`, Identity Accountability, and `include/lez_wallet_sdk.h` | `sdk-engine`, `serde_json`, `cbindgen`, `dashmap`, `tokio` |
 | **`cli`** | Interactive command-line binary (`lez-wallet`) for headless operations, scripting, local testing, and offline address resolution. | Command-line interface via `clap` | `sdk-engine`, `tokio`, `clap`, `env_logger` |
+| **`testimonial-program`** | On-chain RISC-V zkVM smart contract storing testimonials and binding `SUBMISSION_ID` to submitter PDA records. | Program header ID, instruction calldata ABI | `lee`, `lee_core`, `common`, `serde` |
 | **`evidence-tool`** | Scans on-chain testimonial records from testnet sequencer, filtering by `submission_id` to verify distinct accounts and temporal dispersion. | Command-line audit utility | `wallet`, `common`, `clap`, `tokio` |
 
 ## 3. System Architecture Diagram
