@@ -5,13 +5,14 @@ members = [
     "crates/sdk-ffi",
     "crates/cli",
     "crates/evidence-tool",
+    "integration-tests",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/evice-labs/e-wallet-sdk"
+repository = "https://github.com/evice-labs/lez-wallet-sdk"
 
 [workspace.dependencies]
 # LEZ monorepo crates
@@ -30,7 +31,8 @@ sequencer_stake_core  = { git = "https://github.com/logos-blockchain/logos-execu
 program_loader_core   = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "program_loader_core" }
 
 # SDK internal crates
-sdk-engine = { path = "crates/sdk-engine" }
+sdk-engine  = { path = "crates/sdk-engine" }
+sdk-ffi     = { path = "crates/sdk-ffi" }
 
 # Third-party crates
 anyhow          = "1.0.98"

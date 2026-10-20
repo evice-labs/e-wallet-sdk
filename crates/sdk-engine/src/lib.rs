@@ -7,8 +7,8 @@ pub mod api;
 pub mod approval;
 pub mod decode;
 pub mod effects;
-pub mod identity;
 pub mod error;
+pub mod identity;
 pub mod queue;
 pub mod request;
 pub mod resolve;
@@ -21,9 +21,11 @@ pub mod verifier;
 pub use api::{DAppApi, OwnerApi, SdkEngine};
 pub use approval::{ApprovalDecision, ApprovalHandler};
 pub use error::SdkError;
+pub use identity::{
+    AttestationPayload, IdentityCommitment, IdentitySecret, RegistrationPayload, ScopedNullifier,
+};
 pub use request::{PendingRequest, RequestId, RequestStatus};
 pub use session::{GrantKind, SessionGrant, SessionId};
-pub use identity::{AttestationPayload, IdentityCommitment, IdentitySecret, RegistrationPayload, ScopedNullifier};
 
 /// SDK version string, returned by `sdk_info()`.
 pub const SDK_VERSION: &str = env!("CARGO_PKG_VERSION");

@@ -1,18 +1,18 @@
 //! LNS (LEZ Name Service) clean-room resolver.
 //!
-//! Implements the SPEC.md v2 resolution protocol using only standard crates.
+//! Implements the SPEC.md resolution protocol using only standard crates.
 //! No code from `jefdiesel/logos-names` is imported.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use dashmap::DashMap;
 use lee::AccountId;
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use super::{NameResolver, ResolveError, ResolvedDestination};
 
-/// Default Argon2id parameters from SPEC.md v2.
+/// Default Argon2id parameters from SPEC.md
 const ARGON2_MEMORY_KIB: u32 = 65_536; // 64 MiB
 const ARGON2_PASSES: u32 = 3;
 const ARGON2_LANES: u32 = 1;
@@ -48,8 +48,8 @@ impl Default for LnsConfig {
     fn default() -> Self {
         use std::str::FromStr;
         // Default testnet registry
-        let registry_program_id = AccountId::from_str("66nUvzJtTxA729aUpTcAWDrb7cV9Heb2bDzceHQhLYad")
-            .unwrap_or_default();
+        let registry_program_id =
+            AccountId::from_str("66nUvzJtTxA729aUpTcAWDrb7cV9Heb2bDzceHQhLYad").unwrap_or_default();
         Self {
             registry_program_id,
             enabled: true,
@@ -59,7 +59,7 @@ impl Default for LnsConfig {
 
 /// Clean-room LNS resolver.
 ///
-/// Resolution protocol (from SPEC.md v2):
+/// Resolution protocol (from SPEC.md):
 /// 1. Normalise: trim, lowercase, strip ".lez", validate [a-z0-9-]{1,32}
 /// 2. Derive: Argon2id(name, "logos-names/v5", 64MiB, 3, 1) → master
 ///    id  = SHA-256("logos-names/v5/id"  ‖ master)

@@ -28,12 +28,19 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev pkg-config
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: e-wallet-sdk
-      - run: cargo check --workspace
-      - run: cargo test --workspace
-      - run: cargo clippy --workspace -- -D warnings
+      - name: Verify source formatting
+        run: cargo fmt --all -- --check
+      - name: Check workspace compilation
+        run: cargo check --workspace
+      - name: Run workspace test suite
+        run: cargo test --workspace
+      - name: Check clippy lints
+        run: cargo clippy --workspace -- -D warnings
 
   # Security audit: verify no dev-auto-approve symbol in release
   release-check:

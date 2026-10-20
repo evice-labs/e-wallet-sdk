@@ -11,17 +11,30 @@ env:
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: e-wallet-sdk
     steps:
       - uses: actions/checkout@v4
+        with:
+          path: e-wallet-sdk
       - uses: actions/checkout@v4
         with:
           repository: logos-blockchain/logos-execution-zone
-          path: ../logos-execution-zone
-          ref: ${{ vars.LEZ_COMMIT }}
+          path: logos-execution-zone
+          ref: ${{ vars.LEZ_COMMIT || 'dev' }}
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --bin lez-wallet
-      - run: |
-          # TODO(M2): Real-proof smoke test against testnet 0.4
+        with:
+          workspaces: e-wallet-sdk
+      - name: Verify source formatting
+        run: cargo fmt --all -- --check
+      - name: Build wallet CLI
+        run: cargo build --bin lez-wallet
+      - name: Smoke test execution
+        run: |
+          # TODO: Real-proof smoke test against testnet 0.4
           echo "Smoke test placeholder — connect to testnet and verify basic operations"
           cargo run --bin lez-wallet -- info

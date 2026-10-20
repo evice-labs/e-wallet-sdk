@@ -20,6 +20,7 @@
 typedef struct FfiSdkEngine FfiSdkEngine;
 
 /**
+ * OPAQUE ENGINE HANDLE & APPROVAL HANDLER
  * Callback type for approval prompts in C/C++.
  *
  * Return values:
@@ -34,6 +35,7 @@ extern "C" {
 #endif // __cplusplus
 
 /**
+ * PUBLIC C-ABI INTERFACE
  * Free any string previously returned by a `lez_wallet_*` function.
  */
 void lez_wallet_free_string(char *ptr);
@@ -81,6 +83,7 @@ char *lez_wallet_submit_approval_decision(struct FfiSdkEngine *engine,
                                           int32_t decision);
 
 /**
+ * PRIVILEGED OWNER API (OwnerApi)
  * Create a fresh wallet encrypted under `password`.
  * Returns JSON: `{"ok":true, "mnemonic":"word1 word2 ..."}` or `{"ok":false, "error":"..."}`.
  */
@@ -137,6 +140,7 @@ char *lez_wallet_set_account_label(struct FfiSdkEngine *engine,
                                    bool is_private);
 
 /**
+ * DAPP PROVIDER API (DAppApi)
  * Query SDK and network information.
  */
 char *lez_wallet_sdk_info(struct FfiSdkEngine *engine);
@@ -226,6 +230,7 @@ char *lez_wallet_resolve_name(struct FfiSdkEngine *engine,
                               const char *name);
 
 /**
+ * IDENTITY ACCOUNTABILITY API
  * Request identity permission grants (`IdentityRead` or `IdentityPropose`).
  */
 char *lez_wallet_request_identity_access(struct FfiSdkEngine *engine,

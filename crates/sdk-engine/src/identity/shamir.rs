@@ -34,10 +34,7 @@ pub fn split_secret(
 }
 
 /// Reconstructs a 32-byte secret using at least `threshold_n` shares via Lagrange interpolation.
-pub fn recover_secret(
-    shares_bytes: &[Vec<u8>],
-    threshold_n: u32,
-) -> Result<[u8; 32], SdkError> {
+pub fn recover_secret(shares_bytes: &[Vec<u8>], threshold_n: u32) -> Result<[u8; 32], SdkError> {
     if shares_bytes.len() < threshold_n as usize {
         return Err(SdkError::InvalidArgument(
             "The number of shares is below the required threshold".into(),

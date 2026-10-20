@@ -1,12 +1,12 @@
 # System Architecture & Technical Specification
 
-> **Evice Wallet SDK (`e-wallet-sdk`)**  
+> **LEZ Wallet SDK (by Evice Labs)**  
 > Modular, headless Wallet Engine and dApp Provider SDK for the Logos Execution Zone (LEZ).  
-> Designed to satisfy the functional, security, and usability specifications of [LP-0021](https://github.com/logos-co/lambda-prize/blob/master/prizes/LP-0021.md).
+> Designed to provide a high-security, ergonomic wallet infrastructure and provider engine for the Logos Execution Zone.
 
 ## 1. Architectural Philosophy & Design Principles
 
-The Evice Wallet SDK is engineered around five fundamental architectural tenets:
+The LEZ Wallet SDK is engineered around five fundamental architectural tenets:
 
 1. **Headless Core Separation:** The core business logic, session security, transaction pipeline, and cryptographic operations are strictly isolated in a pure Rust crate (`sdk-engine`) with zero graphical (Qt/QML/web) or platform-specific UI dependencies.
 2. **Explicit User Consent & Non-Blind Signing:** External applications (dApps) are untrusted by default. No transaction can be signed or submitted, and no private balance can be inspected, without explicit, account-scoped authorization and human-readable effect simulation.
@@ -16,21 +16,30 @@ The Evice Wallet SDK is engineered around five fundamental architectural tenets:
 
 ## 2. Workspace & Crate Decomposition
 
-The workspace is structured into specialized, loosely coupled crates under `crates/`:
+The workspace is structured into specialized, loosely coupled crates under `crates/`, with root-level container and task automation:
 
 ```
-e-wallet-sdk/
+lez-wallet-sdk/
 ├── Cargo.toml                  # Workspace root manifest and unified dependency pins
 ├── SUBMISSION_ID               # Unique submission identifier for on-chain attribution
 ├── README.md                   # Quickstart, installation, and build documentation
+├── Dockerfile                  # Multi-stage container build for standalone LEZ sequencer
+├── docker-compose.yml          # Container orchestration runner for local dev-env
+├── Justfile                    # Declarative workspace & dev-env task automation runner
 ├── crates/
 │   ├── sdk-engine/             # Core headless wallet engine (pure Rust)
 │   ├── sdk-ffi/                # C-ABI export layer for Basecamp Qt integration
 │   ├── cli/                    # Headless CLI binary (`lez-wallet`)
 │   └── evidence-tool/          # On-chain testimonial adoption audit utility
-├── dev-env/                    # Local development sequencer and pre-funded genesis accounts
+├── dev-env/                    # Standalone sequencer configuration and genesis fixtures
+│   ├── genesis_accounts.json   # Pre-funded Alice, Bob, and shielded circuit accounts
+│   ├── sequencer_config.json   # Standalone genesis parameters and mock channel config
+│   ├── wallet_config.json      # SDK & CLI RPC connection settings (http://127.0.0.1:3040)
+│   └── README.md               # Standalone development environment guide
+├── integration-tests/          # End-to-end integration test suites
 ├── docs/                       # Specifications, architecture, and documentation
-│   └── ARCHITECTURE.md         # This comprehensive architecture document
+│   ├── ARCHITECTURE.md         # This comprehensive architecture document
+│   └── sdk-api-reference.md    # Complete SDK API reference & JSON wire format
 └── .github/workflows/          # Continuous Integration for Linux and macOS runners
 ```
 
@@ -218,7 +227,7 @@ Blind signing of raw byte payloads is strictly prohibited:
 
 ### 4.6 Program Source Verification (`verifier.rs`)
 
-Aligning with the LP-0023 source reproducibility specification, the approval pipeline checks the authenticity of target smart contracts:
+Aligning with reproducible smart contract source verification standards, the approval pipeline checks the authenticity of target smart contracts:
 
 - **`VerificationStatus`:**
   - `Verified { compiler, repo }`: The on-chain bytecode corresponds reproducibly to the source repository at the audited commit.
@@ -228,7 +237,7 @@ Aligning with the LP-0023 source reproducibility specification, the approval pip
 
 ### 4.7 Clean-Room Logos Name Service (LNS) Resolver (`resolve/lns.rs`)
 
-The SDK incorporates an independent, clean-room implementation of the Logos Name Service (`SPEC.md v2`) for human-readable `.lez` names:
+The SDK incorporates an independent, clean-room implementation of the Logos Name Service ([`SPEC.md`](https://github.com/jefdiesel/logos-names/blob/main/SPEC.md)) for human-readable `.lez` names:
 
 ```
 Input Name: "alice.lez"
@@ -368,11 +377,41 @@ The `lez-wallet` CLI provides a standalone, production-grade terminal interface 
    - **`account`**: `create-public`, `create-private` (shielded circuit), `list` (inventory table), `balance <account>`.
    - **`transfer`**: `public`, `shield`, `unshield`, `private`. Enforces non-zero amount checks, self-transfer guards, and privacy type compatibility. Accepts transparent `.lez` LNS destinations.
    - **`token`**: `create-definition`, `initialize-holding`, `transfer`, `mint`, `burn`, `balance`.
-   - **`resolve <name.lez>`**: Standalone SPEC.md v2 resolver displaying normalised names, Name IDs, PDA seeds, and live sequencer lookup.
+   - **`resolve <name.lez>`**: Standalone [SPEC.md](https://github.com/jefdiesel/logos-names/blob/main/SPEC.md) resolver displaying normalised names, Name IDs, PDA seeds, and live sequencer lookup.
    - **`info`**: Diagnostic environment and wallet status banner.
 5. **Human-Centric UX:**
    - Mnemonic recovery phrases rendered in a 3-column numbered grid (`1. word   2. word   3. word`), preventing single-line overflow across 12- and 24-word phrases.
    - Formatted ASCII borders for transaction proposal statuses and account tables.
+
+### 4.12 Standalone Development Environment (`dev-env`, Docker, Justfile)
+
+To facilitate rapid, reliable local development and continuous integration without dependency on live external testnets or public faucet availability, the workspace includes a self-contained local development environment:
+
+1. **Standalone Architecture & Mocked L1:**
+   - Runs an authentic LEZ `sequencer_service` in `--features standalone` mode.
+   - Embeds an in-memory mocked Bedrock L1 consensus layer with instant block commitment and mock channel anchoring (`channel_id: 0101...01`).
+   - Operates under `RISC0_DEV_MODE=1`, enabling transaction validation, state commitments, and mock proving to execute in milliseconds without zkVM STARK proving latency.
+2. **Clean Separation of Concerns:**
+   - **Repository Root:** Centralizes operational orchestration manifests:
+     - `Dockerfile`: Multi-stage build compiling `sequencer_service` from the pinned upstream LEZ `dev` branch.
+     - `docker-compose.yml`: Root service configuration exposing JSON-RPC on port `3040:3040` and managing volume mounts.
+     - `Justfile`: Task runner standardizing dev-env commands (`just dev-start`, `dev-stop`, `dev-health`, `dev-fund`).
+   - **`dev-env/` Directory:** Strictly stores declarative configuration templates and fixtures:
+     - `genesis_accounts.json`: Human- and machine-readable specification of pre-funded genesis accounts.
+     - `sequencer_config.json`: Genesis block actions, channel parameters, and gossip listener bindings.
+     - `wallet_config.json`: Client-side SDK and CLI connection configuration pointing to `http://127.0.0.1:3040`.
+3. **Pre-Funded Genesis Accounts:**
+   - **Alice (Dispenser):** `Public/6aa4c365699b89d963ef85a59868b9612b6001f90750b4970662a62776332e81` (10,000,000,000,000 units), private key `7f273098f25b71e6c005a9519f2678da8d1c7f01f6a27778e2d9948abdf901fb`.
+   - **Bob (Counterparty):** `Public/891ae258f92ca8447af6cf09c41d96b3a06187d098b91ab2cc17b42e3c4a2fa1` (20,000,000,000,000 units), private key `f434f8741720014586ae43356d2aec6257da086222f604ddb75d69733b86fc4c`.
+   - **Shielded Accounts:** Pre-seeded circuit pools `44KVvzvh2ephQU9aR5snboGUXKgS1FnPYh1W4KZKwmhm` and `478hD6LXFTYu5gRRkWkCyXPRsWgCwAfRredoCUfxr5b9`.
+4. **Declarative Task Automation (`Justfile`):**
+   - `just dev-start`: Boots the standalone sequencer in the background via Docker Compose.
+   - `just dev-stop`: Gracefully shuts down the sequencer container.
+   - `just dev-health`: Executes an automated JSON-RPC probe (`checkHealth`) returning verified status.
+   - `just dev-logs`: Streams real-time container log output.
+   - `just dev-fund <recipient> [amount]`: Dispenses native tokens from Alice to any address or `.lez` name.
+   - `just dev-clean`: Resets sequencer storage for a clean genesis state.
+   - `just dev-native-start`: Native Cargo fallback for developer workstations or CI environments without Docker.
 
 ## 5. Security & Privacy Model
 
@@ -408,7 +447,7 @@ Following the project's phased delivery approach, the architecture document refl
 - [x] Non-blocking asynchronous approval handler trait (`CliApprovalHandler`, `PolicyApprovalHandler`, `FfiApprovalHandler`).
 - [x] Calldata instruction decoders for Native, Token, ATA, and Testimonial programs.
 - [x] Pre-execution effect simulator and balance diff projector.
-- [x] Program source verification abstraction conforming to LP-0023.
+- [x] Program source verification abstraction conforming to reproducible smart contract registry standards.
 - [x] Token facade with 4-direction transfer matrix (public/private combinations).
 - [x] Clean-room Logos Name Service (LNS) `.lez` resolver with Argon2id and caching.
 - [x] Identity Accountability cryptographic primitives (HKDF derivation, scoped nullifiers, Two-Tier Shamir Secret Sharing over GF($2^8$), BIP-340 Schnorr attestations, and secp256k1 ECDH).
@@ -416,6 +455,7 @@ Following the project's phased delivery approach, the architecture document refl
 - [x] Automated CI pipelines for Linux and macOS tracking upstream LEZ `dev`.
 - [x] **Full C-ABI FFI Layer (`sdk-ffi`):** Complete `extern "C"` surface with opaque pointer handles (`FfiSdkEngine`), panic-safe JSON serialization (`{"ok": true, ...}` / `{"ok": false, "error": "..."}`), non-blocking approval callback bridge supporting synchronous decisions & asynchronous deferred approvals, memory lifecycle (`lez_wallet_free_string`), and auto-generated C header (`include/lez_wallet_sdk.h`).
 - [x] **Comprehensive CLI Subcommands (`cli`):** Full dispatch wiring for wallet lifecycle (`create`, `open`, `restore`), account management (`create-public`, `create-private`, `list`, `balance`), transfers across 4 directions with transparent `.lez` LNS name resolution and interactive terminal approval modal, and token operations (`create-definition`, `initialize-holding`, `transfer`, `mint`, `burn`, `balance`).
+- [x] **Standalone Development Environment (`dev-env/`, Docker, Justfile):** Containerized and native standalone LEZ sequencer with mocked Bedrock L1, pre-funded Alice & Bob genesis accounts, fast `RISC0_DEV_MODE=1` execution, zero external network dependency, and declarative `Justfile` tasks (`dev-start`, `dev-stop`, `dev-health`, `dev-fund`, `dev-clean`).
 
 ### Upcoming Incremental Stages
 - [ ] **Basecamp Integration & Testimonial Mini-App:** Core and UI Basecamp modules published to catalog, testimonial submission on testnet 0.4.

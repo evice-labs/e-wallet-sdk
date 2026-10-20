@@ -1,0 +1,29 @@
+services:
+  sequencer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lez-standalone-sequencer:latest
+    container_name: lez-standalone-sequencer
+    restart: unless-stopped
+    ports:
+      - "3040:3040"
+    environment:
+      - RISC0_DEV_MODE=1
+      - RISC0_SERVER_PATH=/usr/local/bin/r0vm
+      - RUST_LOG=info,kameo=warn,sequencer_service=info
+    volumes:
+      - ./dev-env/sequencer_config.json:/var/lib/sequencer_service/sequencer_config.json:ro
+      - ./dev-env/genesis_accounts.json:/var/lib/sequencer_service/genesis_accounts.json:ro
+      - ./dev-env/.sequencer_home:/var/lib/sequencer_service/data
+    command:
+      - sh
+      - -c
+      - |
+        mkdir -p /var/lib/sequencer_service/data
+        if [ ! -f /var/lib/sequencer_service/data/sequencer_config.json ]; then
+            echo '⚙️  Initializing sequencer home from template...'
+            sequencer_service setup --config /var/lib/sequencer_service/sequencer_config.json --funding-public-key 2e03b2eff5a45478e7e79668d2a146cf2c5c7925bce927f2b1c67f2ab4fc0d26 --create-channel /var/lib/sequencer_service/data
+        fi
+        echo '🚀 Starting LEZ Standalone Sequencer on 0.0.0.0:3040...'
+        exec sequencer_service start /var/lib/sequencer_service/data --rpc-listen-address 0.0.0.0:3040

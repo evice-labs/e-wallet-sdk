@@ -1,6 +1,5 @@
 use sha2::{Digest, Sha256};
 
-use crate::error::SdkError;
 use super::ecdh;
 use super::shamir;
 use super::signature;
@@ -8,6 +7,7 @@ use super::types::{
     AttestationPayload, EncryptedShare, IdentityCommitment, IdentitySecret, RegistrationPayload,
     ScopedNullifier,
 };
+use crate::error::SdkError;
 
 /// Derive the master identity secret from the BIP-39 root seed using HKDF-SHA256.
 ///

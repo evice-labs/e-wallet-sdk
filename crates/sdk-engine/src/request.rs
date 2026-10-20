@@ -7,14 +7,14 @@
 //! The canonical **intent hash** binds: sender, destination, amount, program,
 //! calldata, nonce-at-proposal-time, and the session that created it.
 
-use std::collections::HashMap;
-use std::fmt;
-use std::sync::Arc;
-use std::time::Instant;
 use common::HashType;
 use lee::AccountId;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::Arc;
+use std::time::Instant;
 use tokio::sync::RwLock;
 
 use crate::session::SessionId;
