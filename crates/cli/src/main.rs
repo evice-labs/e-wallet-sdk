@@ -360,7 +360,7 @@ async fn resolve_or_parse_account(engine: &SdkEngine, target: &str) -> Result<Ac
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+pub async fn main() -> Result<()> {
     env_logger::init();
     let cli = Cli::parse();
     let data_dir = expand_tilde(cli.data_dir);
