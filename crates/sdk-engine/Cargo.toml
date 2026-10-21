@@ -13,6 +13,7 @@ lee_core.workspace = true
 common.workspace = true
 key_protocol.workspace = true
 sequencer_service_rpc.workspace = true
+testimonial-program.workspace = true
 
 # Third-party
 argon2.workspace = true

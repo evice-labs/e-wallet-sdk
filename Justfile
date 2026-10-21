@@ -81,3 +81,26 @@ dev-fund recipient amount="10000000":
 dev-native-start:
     @echo "⚡ Starting sequencer via native Cargo..."
     RISC0_DEV_MODE=1 cargo run --git https://github.com/logos-blockchain/logos-execution-zone.git --branch dev --features standalone -p sequencer_service -- start dev-env/.sequencer_home --rpc-listen-address 127.0.0.1:3040
+
+# ON-CHAIN SMART CONTRACT & DISPATCHER COMMANDS
+#
+# Build the guest testimonial program for target riscv32im-risc0-zkvm-elf
+build-program:
+    RUSTFLAGS='--cfg getrandom_backend="custom"' cargo +risc0 build --release --manifest-path programs/testimonial-program/Cargo.toml --target riscv32im-risc0-zkvm-elf
+
+# Check current deployment registry status
+status:
+    cargo run -p lez-dispatcher -- status
+
+# Deploy program binary to sequencer via ProgramLoader and record in deployments.json
+deploy-program bin network="standalone":
+    cargo run -p lez-dispatcher -- deploy --bin {{bin}} --network {{network}}
+
+# Submit an on-chain testimonial attributed to SUBMISSION_ID
+submit-testimonial text username="":
+    cargo run -p lez-dispatcher -- submit-testimonial --text "{{text}}"
+
+# Run the testimonial adoption evidence audit tool
+audit-evidence:
+    cargo run -p evidence-tool
+

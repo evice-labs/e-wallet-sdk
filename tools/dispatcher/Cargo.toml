@@ -1,0 +1,30 @@
+[package]
+name = "lez-dispatcher"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+default-run = "lez-dispatcher"
+
+[[bin]]
+name = "lez-dispatcher"
+path = "src/main.rs"
+
+[dependencies]
+lee_core.workspace = true
+lee.workspace = true
+common.workspace = true
+wallet.workspace = true
+sequencer_service_rpc.workspace = true
+program_loader_core.workspace = true
+testimonial-program.workspace = true
+
+clap.workspace = true
+tokio.workspace = true
+hex.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+borsh.workspace = true
+sha2.workspace = true
+risc0-binfmt.workspace = true
+risc0-zkos-v1compat.workspace = true

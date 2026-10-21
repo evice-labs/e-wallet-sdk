@@ -42,7 +42,7 @@ impl DecoderRegistry {
                 Box::new(native::NativeDecoder),
                 Box::new(token::TokenDecoder),
                 Box::new(ata::AtaDecoder),
-                Box::new(testimonial::TestimonialDecoder),
+                Box::new(testimonial::TestimonialDecoder::new()),
             ],
         }
     }
