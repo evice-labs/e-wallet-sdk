@@ -1,0 +1,16 @@
+[package]
+name = "testimonial-program"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+lee_core.workspace = true
+
+borsh.workspace = true
+serde.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
