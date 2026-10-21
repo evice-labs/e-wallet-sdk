@@ -1,11 +1,11 @@
-## LEZ Wallet SDK — API Reference Manual
+## Evice Wallet SDK — API Reference Manual
 
 > **Version:** Draft v1.0 (Alpha)  
 > **Target Audience:** dApp Developers, Core Module (`wallet-provider`) Integrators, and Native Client Engineers.
 
 ## 1. Architectural Overview & API Surfaces
 
-The LEZ Wallet SDK exposes two distinct high-level interfaces on top of the headless `SdkEngine`:
+The Evice Wallet SDK exposes two distinct high-level interfaces on top of the headless `SdkEngine`:
 
 1. **`DAppApi` (Untrusted External Surface):**  
    Session-scoped interface accessed by dApps or external consumers. All methods require a valid `SessionId` and enforce granular, per-account privilege checks (`GrantKind`).

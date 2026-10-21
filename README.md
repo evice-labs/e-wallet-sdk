@@ -1,6 +1,6 @@
-## LEZ Wallet SDK
+## Evice Wallet SDK
 
-> **LEZ Wallet & Provider SDK (by Evice Labs)** — A modular, high-performance wallet engine and dApp integration SDK for the Logos Execution Zone (LEZ).
+> **Evice Wallet & Provider SDK (by Evice Labs)** — A modular, high-performance wallet engine and dApp integration SDK for the Logos Execution Zone (LEZ).
 
 ## Overview
 
@@ -29,8 +29,13 @@ lez-wallet-sdk/
 ├── crates/
 │   ├── sdk-engine/             # Core wallet engine (pure Rust, no Qt)
 │   ├── sdk-ffi/                # C-ABI FFI layer for Basecamp module binding
-│   ├── cli/                    # Command-line interface (`lez-wallet`)
+│   ├── cli/                    # Command-line interface (`evice-wallet`)
 │   └── evidence-tool/          # Adoption verification tool for on-chain testimonials
+├── programs/
+│   └── testimonial-program/    # On-chain testimonial smart contract (RISC-V zkVM guest)
+├── tools/
+│   └── dispatcher/             # Program deployment and on-chain dispatch CLI (`lez-dispatcher`)
+├── deployments.json            # On-chain program deployment registry (testnet 0.3 - 0.4 & dev-env)
 ├── dev-env/                    # Standalone development environment & genesis fixtures
 │   ├── genesis_accounts.json   # Pre-funded Alice, Bob, and shielded circuit accounts
 │   ├── sequencer_config.json   # Standalone genesis parameters and mock channel config
@@ -39,7 +44,9 @@ lez-wallet-sdk/
 ├── integration-tests/          # End-to-end integration test suites
 ├── docs/                       # Specifications and technical documentation
 │   ├── ARCHITECTURE.md         # Comprehensive system architecture & technical specification
-│   └── sdk-api-reference.md    # Complete SDK API reference & JSON wire format
+│   ├── sdk-api-reference.md    # Complete SDK API reference & JSON wire format
+│   ├── program-deployment.md   # Smart contract compilation, deployment & dispatcher guide
+│   └── testnet-deployment-evidence.md # On-chain testnet deployment logs, block heights & transaction hashes
 └── .github/workflows/          # Multi-platform CI workflows (Linux & macOS)
 ```
 
@@ -56,7 +63,7 @@ lez-wallet-sdk/
 
 #### 2. Immutable Requests & Intent Hashing (`request.rs`)
 - Propose calls (`proposeNativeTransfer`, `proposeTokenTransfer`, `proposeTransaction`) immediately return a `RequestId`.
-- The engine computes a deterministic 32-byte SHA-256 intent hash (`lez-wallet-sdk/intent/v1/`) binding the request ID, session ID, and serialised parameters.
+- The engine computes a deterministic 32-byte SHA-256 intent hash (`evice-wallet-sdk/intent/v1/`) binding the request ID, session ID, and serialised parameters.
 - The hash is verified before execution, eliminating Time-of-Check to Time-of-Use (TOCTOU) tampering.
 
 #### 3. Asynchronous Non-Blocking Approvals (`approval.rs`)
@@ -102,7 +109,7 @@ lez-wallet-sdk/
 - Complete coverage of `OwnerApi`, `DAppApi`, and Identity Accountability APIs.
 - Header generation via `cbindgen` producing [`include/lez_wallet_sdk.h`](include/lez_wallet_sdk.h) with strict C/C++ linkage guards.
 
-#### 10. Comprehensive Command-Line Interface (`crates/cli`, `lez-wallet`)
+#### 10. Comprehensive Command-Line Interface (`crates/cli`, `evice-wallet`)
 - Standalone, zero-dependency terminal binary dispatching directly to the headless `SdkEngine` core.
 - **Robust Terminal Security:** Zero-echo password prompting via `rpassword::prompt_password` preventing shoulder surfing and terminal scrollback leaks (CWE-522), mandatory password confirmation on wallet creation/restoration to eliminate typo lockouts, and explicit storage overwrite protection requiring `--force`.
 - **4-Direction Asset Transfers & LNS:** Supports `public`, `shield`, `unshield`, and `private` transfers with non-zero amount validation, account privacy verification, and transparent `.lez` domain resolution.
@@ -116,6 +123,13 @@ lez-wallet-sdk/
 - **Zero Faucet Dependency:** Pre-funded genesis accounts ([`genesis_accounts.json`](dev-env/genesis_accounts.json)) with Alice (dispenser, 10T units) and Bob (counterparty, 20T units), plus shielded pools, insulating local development from external network conditions.
 - **Task Runner Orchestration:** Unified commands in root [`Justfile`](Justfile) (`just dev-start`, `just dev-stop`, `just dev-health`, `just dev-logs`, `just dev-fund`, `just dev-clean`) and root [`docker-compose.yml`](docker-compose.yml).
 - **Comprehensive Documentation:** Full setup, account tables, and operational workflows documented in [`dev-env/README.md`](dev-env/README.md).
+
+#### 12. On-Chain Smart Contract, Program Deployment & Dispatcher (`programs/`, `tools/`, `deployments.json`)
+- **zkVM Testimonial Smart Contract (`programs/testimonial-program`):** Embeds `SUBMISSION_ID` into submitter PDA records with strict invariant checks ($\le 280$ byte text, $\le 64$ byte moniker, submitter deduplication per submission ID).
+- **On-Chain Dispatcher Tool (`tools/dispatcher`, `lez-dispatcher`):** CLI tool for chunked program bytecode deployment via `ProgramLoader`, sending on-chain testimonial transactions, checking registry status, and dispatching raw instructions.
+- **Unified Deployment Registry (`deployments.json`):** Tracks deployed program header accounts across `standalone` (local) and `testnet` (public) environments, dynamically linked with `BuiltinVerifier` and `TestimonialDecoder`.
+- **Adoption Evidence Auditing (`crates/evidence-tool`):** Audits on-chain testimonial records against LP-0021 criteria (150 distinct submitters across required intervals).
+- **Comprehensive Guide:** Complete build, deploy, and dispatch instructions documented in [`docs/program-deployment.md`](docs/program-deployment.md).
 
 ## Quick Start
 
@@ -177,24 +191,58 @@ See [`dev-env/README.md`](dev-env/README.md) for full architectural details, pre
 ### Running the CLI
 
 ```bash
+# Display full CLI help and list of all available commands
+cargo run --bin evice-wallet -- --help
+
 # Display SDK version, API version, and network diagnostics
-cargo run --bin lez-wallet -- info
+cargo run --bin evice-wallet -- info
 
 # Initialize a new wallet with zero-echo password and 24-word recovery phrase
-cargo run --bin lez-wallet -- wallet create
+cargo run --bin evice-wallet -- wallet create
 
 # Derive transparent public and shielded private accounts
-cargo run --bin lez-wallet -- account create-public --label "Alice Public"
-cargo run --bin lez-wallet -- account create-private --label "Bob Shielded"
+cargo run --bin evice-wallet -- account create-public --label "Alice Public"
+cargo run --bin evice-wallet -- account create-private --label "Bob Shielded"
 
 # List all accounts with privacy types, labels, and balances
-cargo run --bin lez-wallet -- account list
+cargo run --bin evice-wallet -- account list
 
 # Propose a transfer (accepts raw account addresses or human-readable .lez names)
-cargo run --bin lez-wallet -- transfer public --from <FROM_ADDR> --to alice.lez --amount 100
+cargo run --bin evice-wallet -- transfer public --from <FROM_ADDR> --to alice.lez --amount 100
 
 # Perform offline clean-room .lez name resolution (Argon2id 64 MiB, 3 passes + PDA calculation)
-cargo run --bin lez-wallet -- resolve alice.lez
+cargo run --bin evice-wallet -- resolve alice.lez
+
+# Identity Accountability: Inspect master public commitment
+cargo run --bin evice-wallet -- identity commitment
+
+# Identity Accountability: Derive cross-dApp unlinkable scoped nullifier
+cargo run --bin evice-wallet -- identity nullifier --scope "dao_voting_room"
+
+# Identity Accountability: Sign verifiable BIP-340 Schnorr attestation
+cargo run --bin evice-wallet -- identity attest --scope "dao_voting_room" --message "Vote YES on Proposal 42"
+```
+
+### On-Chain Program Deployment & Testimonials (`lez-dispatcher`)
+
+Deploy smart contracts and submit testimonials attributed to `SUBMISSION_ID` using `Justfile` tasks or `lez-dispatcher`:
+
+```bash
+# Check current deployment registry status
+just status
+# or: cargo run -p lez-dispatcher -- status
+
+# Deploy program binary to standalone local sequencer via ProgramLoader
+just deploy-program <path-to-bin> standalone
+# or: cargo run -p lez-dispatcher -- deploy --bin <path-to-bin> --network standalone
+
+# Submit an on-chain testimonial attributed to SUBMISSION_ID
+just submit-testimonial "Built with Evice Wallet SDK! Fast, private, and developer-friendly." "alice"
+# or: cargo run -p lez-dispatcher -- submit-testimonial --text "..." --username "alice"
+
+# Run adoption criteria audit across sequencer records
+just audit-evidence
+# or: cargo run -p evidence-tool
 ```
 
 ### Self-Contained Demo
@@ -211,6 +259,7 @@ Automated GitHub Actions workflows are configured in `.github/workflows/`:
 - **`ci-linux.yml`:** Runs on `ubuntu-latest` validating `cargo check`, `cargo test`, `cargo clippy`, and verifies the complete absence of test auto-approval symbols (`PolicyApprovalHandler`) in release binaries.
 - **`cli-e2e.yml`:** Builds workspace binaries, executes the complete end-to-end CLI validation suite in an isolated runner environment, and validates `./demo.sh`.
 - **`ci-macos.yml`:** Runs on `macos-latest` ensuring full macOS compilation and test suite compatibility.
+- **`testnet-smoke.yml`:** Periodic weekly and on-demand workflow running live integration smoke tests verifying Wallet CLI info, LNS offline derivation, multi-network deployment registry, and testnet adoption evidence auditing.
 
 ## Security & Privacy Guarantees
 

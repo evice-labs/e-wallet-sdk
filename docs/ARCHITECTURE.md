@@ -1,12 +1,12 @@
 # System Architecture & Technical Specification
 
-> **LEZ Wallet SDK (by Evice Labs)**  
+> **Evice Wallet SDK (by Evice Labs)**  
 > Modular, headless Wallet Engine and dApp Provider SDK for the Logos Execution Zone (LEZ).  
 > Designed to provide a high-security, ergonomic wallet infrastructure and provider engine for the Logos Execution Zone.
 
 ## 1. Architectural Philosophy & Design Principles
 
-The LEZ Wallet SDK is engineered around five fundamental architectural tenets:
+The Evice Wallet SDK is engineered around five fundamental architectural tenets:
 
 1. **Headless Core Separation:** The core business logic, session security, transaction pipeline, and cryptographic operations are strictly isolated in a pure Rust crate (`sdk-engine`) with zero graphical (Qt/QML/web) or platform-specific UI dependencies.
 2. **Explicit User Consent & Non-Blind Signing:** External applications (dApps) are untrusted by default. No transaction can be signed or submitted, and no private balance can be inspected, without explicit, account-scoped authorization and human-readable effect simulation.
@@ -29,8 +29,13 @@ lez-wallet-sdk/
 ├── crates/
 │   ├── sdk-engine/             # Core headless wallet engine (pure Rust)
 │   ├── sdk-ffi/                # C-ABI export layer for Basecamp Qt integration
-│   ├── cli/                    # Headless CLI binary (`lez-wallet`)
+│   ├── cli/                    # Headless CLI binary (`evice-wallet`)
 │   └── evidence-tool/          # On-chain testimonial adoption audit utility
+├── programs/
+│   └── testimonial-program/    # On-chain testimonial smart contract (RISC-V zkVM guest)
+├── tools/
+│   └── dispatcher/             # Program deployment and on-chain dispatch CLI (`lez-dispatcher`)
+├── deployments.json            # On-chain program deployment registry (testnet 0.4 & dev-env)
 ├── dev-env/                    # Standalone sequencer configuration and genesis fixtures
 │   ├── genesis_accounts.json   # Pre-funded Alice, Bob, and shielded circuit accounts
 │   ├── sequencer_config.json   # Standalone genesis parameters and mock channel config
@@ -39,18 +44,21 @@ lez-wallet-sdk/
 ├── integration-tests/          # End-to-end integration test suites
 ├── docs/                       # Specifications, architecture, and documentation
 │   ├── ARCHITECTURE.md         # This comprehensive architecture document
-│   └── sdk-api-reference.md    # Complete SDK API reference & JSON wire format
+│   ├── sdk-api-reference.md    # Complete SDK API reference & JSON wire format
+│   └── program-deployment.md   # Smart contract compilation, deployment & dispatcher guide
 └── .github/workflows/          # Continuous Integration for Linux and macOS runners
 ```
 
 ### Component Responsibility Matrix
 
-| Crate | Responsibility | Public Interface | Key Dependencies |
+| Component | Responsibility | Public Interface | Key Dependencies |
 |---|---|---|---|
 | **`sdk-engine`** | Central orchestrator, session/grant store, transaction pipeline, decoders, effect simulations, LNS resolver, identity accountability (HKDF, BIP-340 Schnorr, Two-Tier SSS), atomic persistence, and token facade. | `DAppApi`, `OwnerApi`, `SdkEngine`, `ApprovalHandler` | `wallet`, `lee`, `common`, `tokio`, `argon2`, `sha2`, `k256`, `sharks` |
 | **`sdk-ffi`** | Exposes C-ABI (`extern "C"`) functions with opaque handles, JSON serialization, and non-blocking approval callback bridge for Logos Basecamp desktop plugins (`wallet-provider`). | `lez_wallet_engine_new()`, `lez_wallet_engine_free()`, `lez_wallet_set_approval_callback()`, `OwnerApi`, `DAppApi`, Identity Accountability, and `include/lez_wallet_sdk.h` | `sdk-engine`, `serde_json`, `cbindgen`, `dashmap`, `tokio` |
-| **`cli`** | Interactive command-line binary (`lez-wallet`) for headless operations, scripting, local testing, and offline address resolution. | Command-line interface via `clap` | `sdk-engine`, `tokio`, `clap`, `env_logger` |
-| **`evidence-tool`** | Scans on-chain testimonial records from testnet sequencer, filtering by `submission_id` to verify distinct accounts and temporal dispersion. | Command-line audit utility | `wallet`, `common`, `clap`, `tokio` |
+| **`cli`** | Interactive command-line binary (`evice-wallet`) for headless operations, scripting, local testing, and offline address resolution. | Command-line interface via `clap` | `sdk-engine`, `tokio`, `clap`, `env_logger` |
+| **`testimonial-program`** | On-chain RISC-V zkVM smart contract storing testimonials and binding `SUBMISSION_ID` to submitter PDA records. | Program header ID, instruction calldata ABI | `lee`, `lee_core`, `common`, `serde`, `borsh` |
+| **`tools/dispatcher`** | Headless CLI tool (`lez-dispatcher`) for uploading program bytecode via `ProgramLoader`, sending on-chain transactions, and syncing `deployments.json`. | Command-line interface via `clap` | `wallet`, `program_loader_core`, `testimonial-program`, `serde_json` |
+| **`evidence-tool`** | Scans on-chain testimonial records from sequencer, filtering by `submission_id` to verify distinct accounts and temporal dispersion. | Command-line audit utility | `wallet`, `common`, `clap`, `tokio` |
 
 ## 3. System Architecture Diagram
 
@@ -67,7 +75,7 @@ lez-wallet-sdk/
 │                ▼                                        ▼              │
 │   ┌──────────────────────────┐             ┌─────────────────────────┐ │
 │   │   `wallet-provider`      │             │   Terminal User         │ │
-│   │   (Basecamp Core Module) │             │   (CLI `lez-wallet`)    │ │
+│   │   (Basecamp Core Module) │             │   (CLI `evice-wallet`)  │ │
 │   └────────────┬─────────────┘             └────────────┬────────────┘ │
 └────────────────┼────────────────────────────────────────┼──────────────┘
                  │                                        │
@@ -178,7 +186,7 @@ To prevent Time-of-Check to Time-of-Use (TOCTOU) exploits—where a malicious pa
 2. **Intent Hash Calculation:** The engine immediately computes a deterministic 32-byte SHA-256 hash binding the request:
    ```
    IntentHash = SHA-256(
-       "lez-wallet-sdk/intent/v1/" ‖
+       "evice-wallet-sdk/intent/v1/" ‖
        RequestId ‖
        SessionId ‖
        Serialized(RequestKind)
@@ -357,9 +365,9 @@ To enable seamless, language-agnostic integration with Logos Basecamp desktop pl
 5. **C/C++ Header Generation (`cbindgen`):**
    - Header `include/lez_wallet_sdk.h` is automatically generated from Rust docstrings and function signatures, featuring `#ifdef __cplusplus` guards and standard `#pragma once` header protection.
 
-### 4.11 Command-Line Interface (`crates/cli`, `lez-wallet`)
+### 4.11 Command-Line Interface (`crates/cli`, `evice-wallet`)
 
-The `lez-wallet` CLI provides a standalone, production-grade terminal interface interacting directly with the headless `SdkEngine` without external daemon dependencies:
+The `evice-wallet` CLI provides a standalone, production-grade terminal interface interacting directly with the headless `SdkEngine` without external daemon dependencies:
 
 1. **Architecture & Runtime Isolation:**
    - Structured with `clap` v4 using declarative derive syntax and asynchronous Tokio multi-threaded execution.
@@ -378,6 +386,7 @@ The `lez-wallet` CLI provides a standalone, production-grade terminal interface 
    - **`transfer`**: `public`, `shield`, `unshield`, `private`. Enforces non-zero amount checks, self-transfer guards, and privacy type compatibility. Accepts transparent `.lez` LNS destinations.
    - **`token`**: `create-definition`, `initialize-holding`, `transfer`, `mint`, `burn`, `balance`.
    - **`resolve <name.lez>`**: Standalone [SPEC.md](https://github.com/jefdiesel/logos-names/blob/main/SPEC.md) resolver displaying normalised names, Name IDs, PDA seeds, and live sequencer lookup.
+   - **`identity`**: `commitment` (master public commitment), `nullifier --scope <scope>` (unlinkable scoped pseudonym), `attest --scope <scope> --message <msg>` (BIP-340 Schnorr signature).
    - **`info`**: Diagnostic environment and wallet status banner.
 5. **Human-Centric UX:**
    - Mnemonic recovery phrases rendered in a 3-column numbered grid (`1. word   2. word   3. word`), preventing single-line overflow across 12- and 24-word phrases.
@@ -413,6 +422,28 @@ To facilitate rapid, reliable local development and continuous integration witho
    - `just dev-clean`: Resets sequencer storage for a clean genesis state.
    - `just dev-native-start`: Native Cargo fallback for developer workstations or CI environments without Docker.
 
+### 4.13 On-Chain Smart Contract, Program Deployment & Dispatcher (`programs/testimonial-program`, `tools/dispatcher`, `deployments.json`)
+
+To fulfill on-chain adoption verification, verifiable attribution, and automated program deployment requirements without external manual dependencies, the SDK ecosystem incorporates native smart contract artifacts, an on-chain dispatcher tool, and a dynamic deployment registry:
+
+1. **`programs/testimonial-program` (zkVM Smart Contract):**
+   - **Cryptographic Attribution Binding:** Directly embeds `SUBMISSION_ID` (32-byte cryptographic identifier) into each on-chain testimonial record.
+   - **Protocol Invariant Validations:** Enforces strict constraints on message body ($\le 280$ bytes, non-empty) and optional author moniker ($\le 64$ alphanumeric characters).
+   - **Submitter Deduplication:** Rejects duplicate submissions from the same account for a given `submission_id` (`(submitter, submission_id)` uniqueness), preventing sybil gaming of adoption metrics.
+   - **Deterministic PDA Derivation:** Derives deterministic seeds via `SHA-256("testimonial" || submitter || submission_id)`.
+   - **LEZ Actor Model:** Implements standard LEZ `ReceiveInput` and `Response` interfaces, serialising and deserialising account state through Borsh.
+2. **`tools/dispatcher` (`lez-dispatcher` CLI Utility):**
+   - Headless deployment and transaction dispatch CLI built on top of `wallet::WalletCore` and `ProgramLoader`.
+   - **`deploy`**: Reads a compiled program ELF binary, partitions it into chunks adhering to `MAX_SEGMENT_DATA_LEN`, uploads segments via `ProgramLoader`, commits the program header account, and automatically records the new header address in `deployments.json`.
+   - **`submit-testimonial`**: Assembles a `TestimonialInstruction::SubmitTestimonial` instruction payload, resolves the target program header from `deployments.json`, derives required actor states and mentions, and broadcasts the public transaction paid by the wallet keystore.
+   - **`status`**: Displays an ASCII summary of active networks and deployed program header addresses.
+   - **`raw`**: Dispatches arbitrary program calldata and account mention arrays for low-level debugging.
+3. **`deployments.json` Dynamic Registry:**
+   - Single source of truth for deployed program headers across environments (`standalone` on `http://127.0.0.1:3040` and `testnet` on `https://testnet.lez.logos.co`).
+   - Dynamically consumed by `TestimonialDecoder` and `BuiltinVerifier` in `sdk-engine`, ensuring that once a program is deployed, the wallet automatically decodes its calldata and verifies its program ID without hardcoding.
+4. **Adoption Evidence Auditing (`crates/evidence-tool`):**
+   - Command-line audit utility scanning on-chain sequencer state, querying testimonial records matching `SUBMISSION_ID`, and verifying distinct submitter accounts and temporal dispersion criteria.
+
 ## 5. Security & Privacy Model
 
 ### 5.1 Threat Mitigations
@@ -440,7 +471,7 @@ To facilitate rapid, reliable local development and continuous integration witho
 
 Following the project's phased delivery approach, the architecture document reflects factual, currently implemented systems, with future capabilities staged for incremental addition:
 
-### Current Implementation (Core Headless Engine & FFI Layer)
+### Current Implementation (Core Headless Engine, FFI, Tooling & Smart Contract)
 - [x] Three-tier architecture skeleton (`sdk-engine`, `sdk-ffi`, `cli`, `evidence-tool`).
 - [x] In-memory session store with per-account grants (`Read`, `Propose`, `IdentityRead`, `IdentityPropose`) and automatic expiration.
 - [x] Immutable request pipeline with deterministic 32-byte SHA-256 intent hashing.
@@ -456,6 +487,7 @@ Following the project's phased delivery approach, the architecture document refl
 - [x] **Full C-ABI FFI Layer (`sdk-ffi`):** Complete `extern "C"` surface with opaque pointer handles (`FfiSdkEngine`), panic-safe JSON serialization (`{"ok": true, ...}` / `{"ok": false, "error": "..."}`), non-blocking approval callback bridge supporting synchronous decisions & asynchronous deferred approvals, memory lifecycle (`lez_wallet_free_string`), and auto-generated C header (`include/lez_wallet_sdk.h`).
 - [x] **Comprehensive CLI Subcommands (`cli`):** Full dispatch wiring for wallet lifecycle (`create`, `open`, `restore`), account management (`create-public`, `create-private`, `list`, `balance`), transfers across 4 directions with transparent `.lez` LNS name resolution and interactive terminal approval modal, and token operations (`create-definition`, `initialize-holding`, `transfer`, `mint`, `burn`, `balance`).
 - [x] **Standalone Development Environment (`dev-env/`, Docker, Justfile):** Containerized and native standalone LEZ sequencer with mocked Bedrock L1, pre-funded Alice & Bob genesis accounts, fast `RISC0_DEV_MODE=1` execution, zero external network dependency, and declarative `Justfile` tasks (`dev-start`, `dev-stop`, `dev-health`, `dev-fund`, `dev-clean`).
+- [x] **On-Chain Smart Contract & Dispatcher Tooling (`programs/`, `tools/`, `deployments.json`):** RISC-V zkVM `testimonial-program` with `SUBMISSION_ID` attribution, `lez-dispatcher` program deployment and transaction dispatch CLI, dynamic multi-network `deployments.json` registry, and `evidence-tool` adoption auditor.
 
 ### Upcoming Incremental Stages
-- [ ] **Basecamp Integration & Testimonial Mini-App:** Core and UI Basecamp modules published to catalog, testimonial submission on testnet 0.4.
+- [ ] **Basecamp Integration & Testimonial Mini-App:** Core and UI Basecamp modules published to catalog, testimonial submission on testnet 0.3 - 0.4.

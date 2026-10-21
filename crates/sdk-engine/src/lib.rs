@@ -1,6 +1,6 @@
-//! # LEZ Wallet SDK Engine.
+//! # Evice Wallet SDK Engine.
 //!
-//! The core logic layer of the LEZ Wallet SDK. This crate is **pure Rust, no Qt**
+//! The core logic layer of the Evice Wallet SDK for the Logos Execution Zone (LEZ). This crate is **pure Rust, no Qt**
 //! and exposes everything needed by the C-ABI FFI (`sdk-ffi`), the CLI, and Basecamp modules.
 
 pub mod api;

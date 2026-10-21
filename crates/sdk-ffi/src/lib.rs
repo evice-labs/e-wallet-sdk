@@ -1,4 +1,4 @@
-//! C-ABI FFI layer for the LEZ Wallet SDK.
+//! C-ABI FFI layer for the Evice Wallet SDK (Logos Execution Zone).
 //!
 //! This crate exposes the `sdk-engine` API as `extern "C"` functions
 //! consumed by the Basecamp core module (`wallet-provider`) and third-party
@@ -119,7 +119,7 @@ impl ApprovalHandler for FfiApprovalHandler {
     }
 }
 
-/// Opaque handle representing an active LEZ Wallet Engine instance.
+/// Opaque handle representing an active Evice Wallet Engine instance.
 pub struct FfiSdkEngine {
     pub(crate) engine: Arc<SdkEngine>,
     pub(crate) approval_handler: Arc<FfiApprovalHandler>,

@@ -1,12 +1,12 @@
 [package]
-name = "lez-wallet-cli"
+name = "evice-wallet-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "CLI for the LEZ Wallet SDK"
+description = "CLI for the Evice Wallet SDK (Logos Execution Zone)"
 
 [[bin]]
-name = "lez-wallet"
+name = "evice-wallet"
 path = "src/main.rs"
 
 [dependencies]

@@ -1,4 +1,4 @@
-//! Integration test suite crate for LEZ Wallet SDK.
+//! Integration test suite crate for Evice Wallet SDK (Logos Execution Zone).
 //!
 //! Provides end-to-end testing of the complete wallet engine, C-ABI FFI layer,
 //! session security, informed consent approval flows, LNS resolution, and identity accountability.

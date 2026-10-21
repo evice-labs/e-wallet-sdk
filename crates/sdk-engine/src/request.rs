@@ -111,7 +111,7 @@ impl PendingRequest {
     /// exactly the parameters the user approved.
     fn compute_intent_hash(id: &RequestId, session_id: &SessionId, kind: &RequestKind) -> [u8; 32] {
         let mut hasher = Sha256::new();
-        hasher.update(b"lez-wallet-sdk/intent/v1/");
+        hasher.update(b"evice-wallet-sdk/intent/v1/");
         hasher.update(id.0.as_bytes());
         hasher.update(session_id.0.as_bytes());
         // Serialize the kind deterministically.
