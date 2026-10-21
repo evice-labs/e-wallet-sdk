@@ -31,10 +31,19 @@ jobs:
           workspaces: e-wallet-sdk
       - name: Verify source formatting
         run: cargo fmt --all -- --check
-      - name: Build wallet CLI
-        run: cargo build --bin lez-wallet
-      - name: Smoke test execution
+      - name: Build workspace binaries
+        run: cargo build --bins
+      - name: Testnet integration smoke tests
         run: |
-          # TODO: Real-proof smoke test against testnet 0.4
-          echo "Smoke test placeholder — connect to testnet and verify basic operations"
-          cargo run --bin lez-wallet -- info
+          echo "1. Verify Wallet CLI Info & Engine State"
+          cargo run --bin evice-wallet -- info
+
+          echo "2. Verify Logos Name Service (.lez) Resolver"
+          cargo run --bin evice-wallet -- resolve alice.lez
+
+          echo "3. Verify Multi-Network Deployment Registry"
+          cargo run -p lez-dispatcher -- status
+
+          echo "4. Verify Testnet Adoption Evidence Tool"
+          cargo run -p evidence-tool -- --format text
+
