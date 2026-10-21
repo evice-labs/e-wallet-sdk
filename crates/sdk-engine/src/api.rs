@@ -434,7 +434,7 @@ impl DAppApi for SdkEngine {
         Ok(SdkInfo {
             sdk_version: crate::SDK_VERSION.to_string(),
             api_version: crate::API_VERSION,
-            network: "testnet-0.4".to_string(),
+            network: "testnet-0.3-0.4".to_string(),
             wallet_initialized: true,
             wallet_locked: store.state().locked,
         })

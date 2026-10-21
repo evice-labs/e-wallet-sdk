@@ -3,7 +3,7 @@ name = "sdk-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "LEZ Wallet SDK core engine — sessions, approval, requests, and wallet orchestration"
+description = "Evice Wallet SDK core engine — sessions, approval, requests, and wallet orchestration for Logos Execution Zone"
 
 [dependencies]
 # LEZ upstream

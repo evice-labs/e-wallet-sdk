@@ -1,4 +1,4 @@
-# LEZ WALLET SDK — WORKSPACE & DEV-ENV TASK RUNNER
+# EVICE WALLET SDK — WORKSPACE & DEV-ENV TASK RUNNER
 #
 # Requires `just` (https://github.com/casey/just)
 # Run `just` or `just --list` to view all available commands.
@@ -103,4 +103,3 @@ submit-testimonial text username="":
 # Run the testimonial adoption evidence audit tool
 audit-evidence:
     cargo run -p evidence-tool
-

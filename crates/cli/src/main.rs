@@ -1,6 +1,6 @@
-//! LEZ Wallet SDK CLI.
+//! Evice Wallet SDK CLI.
 //!
-//! Provides a comprehensive command-line interface for the LEZ Wallet SDK:
+//! Provides a comprehensive command-line interface for the Evice Wallet SDK:
 //! - `wallet create|open|restore`
 //! - `account create-public|create-private|list|balance`
 //! - `transfer public|shield|unshield|private` (with transparent `.lez` name resolution)
@@ -22,15 +22,23 @@ use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Parser)]
-#[command(name = "lez-wallet", version, about = "LEZ Wallet SDK CLI")]
+#[command(
+    name = "evice-wallet",
+    version,
+    about = "Evice Wallet SDK — Modular Wallet Engine for Logos Execution Zone (LEZ)"
+)]
 struct Cli {
-    /// Data directory for wallet state and config (defaults to ~/.lez-wallet)
-    #[arg(long, env = "LEZ_WALLET_HOME_DIR", default_value = "~/.lez-wallet")]
+    /// Data directory for wallet state and config (defaults to ~/.evice-wallet)
+    #[arg(
+        long,
+        env = "EVICE_WALLET_HOME_DIR",
+        default_value = "~/.device-wallet"
+    )]
     data_dir: PathBuf,
 
-    /// Wallet storage password (can also be passed via LEZ_WALLET_PASSWORD env var).
+    /// Wallet storage password (can also be passed via EVICE_WALLET_PASSWORD or LEZ_WALLET_PASSWORD env var).
     /// WARNING: Passing passwords via CLI argument is visible in process lists (/proc, ps).
-    #[arg(long, env = "LEZ_WALLET_PASSWORD")]
+    #[arg(long, env = "EVICE_WALLET_PASSWORD")]
     password: Option<String>,
 
     /// Auto-approve transactions without interactive terminal prompt (for scripts / CI)
@@ -67,6 +75,11 @@ enum Commands {
     Resolve {
         /// The name to resolve (e.g. alice.lez).
         name: String,
+    },
+    /// Identity Accountability operations (commitment, scoped nullifiers, attestations)
+    Identity {
+        #[command(subcommand)]
+        action: IdentityAction,
     },
     /// Display SDK engine, API versions, and network information
     Info,
@@ -206,6 +219,27 @@ enum TokenAction {
     },
 }
 
+#[derive(Subcommand)]
+enum IdentityAction {
+    /// Display the master public identity commitment
+    Commitment,
+    /// Derive a cross-dApp unlinkable scoped nullifier
+    Nullifier {
+        /// Scope identifier (e.g. dao_voting, forum_auth, chamber_1)
+        #[arg(long)]
+        scope: String,
+    },
+    /// Sign a verifiable BIP-340 Schnorr attestation within a given scope
+    Attest {
+        /// Scope identifier
+        #[arg(long)]
+        scope: String,
+        /// Message payload to attest/sign
+        #[arg(long)]
+        message: String,
+    },
+}
+
 /// Auto-approval handler used when `--yes` is specified.
 struct AutoApprovalHandler;
 
@@ -236,7 +270,7 @@ fn ensure_wallet_exists(data_dir: &Path) -> Result<()> {
     let config = SdkConfig::new(data_dir.to_path_buf());
     if !config.wallet_storage_path.exists() && !config.sdk_state_path.exists() {
         bail!(
-            "No wallet found at '{}'. Run 'lez-wallet wallet create' or 'lez-wallet wallet restore' first.",
+            "No wallet found at '{}'. Run 'evice-wallet wallet create' or 'evice-wallet wallet restore' first.",
             data_dir.display()
         );
     }
@@ -247,6 +281,11 @@ fn ensure_wallet_exists(data_dir: &Path) -> Result<()> {
 fn get_password(cli_pw: &Option<String>, prompt_text: &str) -> Result<String> {
     if let Some(p) = cli_pw.as_ref() {
         return Ok(p.clone());
+    }
+    if let Ok(p) = std::env::var("EVICE_WALLET_PASSWORD")
+        && !p.is_empty()
+    {
+        return Ok(p);
     }
     if let Ok(p) = std::env::var("LEZ_WALLET_PASSWORD")
         && !p.is_empty()
@@ -297,7 +336,7 @@ async fn resolve_or_parse_account(engine: &SdkEngine, target: &str) -> Result<Ac
     if target.ends_with(".lez") {
         println!("Resolving LNS name '{}'...", target);
         let session_id = engine
-            .connect("lez-wallet-cli".into(), sdk_engine::API_VERSION)
+            .connect("evice-wallet-cli".into(), sdk_engine::API_VERSION)
             .await
             .map_err(|e| anyhow::anyhow!("Session error: {:?}", e))?;
         match engine.resolve_name(&session_id, target).await {
@@ -321,7 +360,7 @@ async fn resolve_or_parse_account(engine: &SdkEngine, target: &str) -> Result<Ac
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+pub async fn main() -> Result<()> {
     env_logger::init();
     let cli = Cli::parse();
     let data_dir = expand_tilde(cli.data_dir);
@@ -335,13 +374,13 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Info => {
             println!("╔══════════════════════════════════════════════════════════╗");
-            println!("║                LEZ WALLET PROVIDER SDK CLI               ║");
+            println!("║               EVICE WALLET PROVIDER SDK CLI              ║");
             println!("╠══════════════════════════════════════════════════════════╣");
             println!("║ SDK Version:    {:<40} ║", sdk_engine::SDK_VERSION);
             println!("║ API Version:    {:<40} ║", sdk_engine::API_VERSION);
             println!(
                 "║ Network:        {:<40} ║",
-                "Logos Execution Zone (testnet 0.4)"
+                "Logos Execution Zone (testnet 0.3 - 0.4)"
             );
             println!("║ Data Dir:       {:<40} ║", data_dir.display());
             let config = SdkConfig::new(data_dir.clone());
@@ -517,7 +556,7 @@ async fn main() -> Result<()> {
                     let account_id = resolve_or_parse_account(&engine, &account).await?;
 
                     let session_id = engine
-                        .connect("lez-wallet-cli".into(), sdk_engine::API_VERSION)
+                        .connect("evice-wallet-cli".into(), sdk_engine::API_VERSION)
                         .await
                         .map_err(|e| anyhow::anyhow!("Session error: {:?}", e))?;
                     engine
@@ -599,7 +638,7 @@ async fn main() -> Result<()> {
             }
 
             let session_id = engine
-                .connect("lez-wallet-cli".into(), sdk_engine::API_VERSION)
+                .connect("evice-wallet-cli".into(), sdk_engine::API_VERSION)
                 .await
                 .map_err(|e| anyhow::anyhow!("Session error: {:?}", e))?;
             engine
@@ -649,7 +688,7 @@ async fn main() -> Result<()> {
                         .context("No accounts available to sponsor token definition")?;
 
                     let session_id = engine
-                        .connect("lez-wallet-cli".into(), sdk_engine::API_VERSION)
+                        .connect("evice-wallet-cli".into(), sdk_engine::API_VERSION)
                         .await
                         .map_err(|e| anyhow::anyhow!("Session error: {:?}", e))?;
                     engine
@@ -687,7 +726,7 @@ async fn main() -> Result<()> {
                     let acc_id = resolve_or_parse_account(&engine, &account).await?;
 
                     let session_id = engine
-                        .connect("lez-wallet-cli".into(), sdk_engine::API_VERSION)
+                        .connect("evice-wallet-cli".into(), sdk_engine::API_VERSION)
                         .await
                         .map_err(|e| anyhow::anyhow!("Session error: {:?}", e))?;
                     engine
@@ -731,7 +770,7 @@ async fn main() -> Result<()> {
                     let def_id = resolve_or_parse_account(&engine, &definition).await?;
 
                     let session_id = engine
-                        .connect("lez-wallet-cli".into(), sdk_engine::API_VERSION)
+                        .connect("evice-wallet-cli".into(), sdk_engine::API_VERSION)
                         .await
                         .map_err(|e| anyhow::anyhow!("Session error: {:?}", e))?;
                     engine
@@ -767,7 +806,7 @@ async fn main() -> Result<()> {
                     let to_id = resolve_or_parse_account(&engine, &to).await?;
 
                     let session_id = engine
-                        .connect("lez-wallet-cli".into(), sdk_engine::API_VERSION)
+                        .connect("evice-wallet-cli".into(), sdk_engine::API_VERSION)
                         .await
                         .map_err(|e| anyhow::anyhow!("Session error: {:?}", e))?;
                     engine
@@ -807,7 +846,7 @@ async fn main() -> Result<()> {
                     let from_id = resolve_or_parse_account(&engine, &from).await?;
 
                     let session_id = engine
-                        .connect("lez-wallet-cli".into(), sdk_engine::API_VERSION)
+                        .connect("evice-wallet-cli".into(), sdk_engine::API_VERSION)
                         .await
                         .map_err(|e| anyhow::anyhow!("Session error: {:?}", e))?;
                     engine
@@ -841,7 +880,7 @@ async fn main() -> Result<()> {
                     let holding_id = resolve_or_parse_account(&engine, &holding).await?;
 
                     let session_id = engine
-                        .connect("lez-wallet-cli".into(), sdk_engine::API_VERSION)
+                        .connect("evice-wallet-cli".into(), sdk_engine::API_VERSION)
                         .await
                         .map_err(|e| anyhow::anyhow!("Session error: {:?}", e))?;
                     engine
@@ -890,7 +929,7 @@ async fn main() -> Result<()> {
                         )?;
                         if let Ok(engine) = init_or_open_engine(&data_dir, &pw, handler.clone())
                             && let Ok(session_id) = engine
-                                .connect("lez-wallet-cli".into(), sdk_engine::API_VERSION)
+                                .connect("evice-wallet-cli".into(), sdk_engine::API_VERSION)
                                 .await
                         {
                             match engine.resolve_name(&session_id, &name).await {
@@ -921,6 +960,61 @@ async fn main() -> Result<()> {
                         "Requirements: 1-32 chars of [a-z0-9-], no leading or trailing hyphen."
                     );
                     std::process::exit(1);
+                }
+            }
+        }
+
+        Commands::Identity { action } => {
+            ensure_wallet_exists(&data_dir)?;
+            let pass = get_password(&cli.password, "Enter wallet password")?;
+            let engine = init_or_open_engine(&data_dir, &pass, handler)?;
+            let session_id = engine
+                .connect("evice-wallet-cli".into(), sdk_engine::API_VERSION)
+                .await
+                .map_err(|e| anyhow::anyhow!("Session connection failed: {:?}", e))?;
+            engine
+                .request_identity_access(&session_id, GrantKind::IdentityRead)
+                .await
+                .map_err(|e| anyhow::anyhow!("Grant error: {:?}", e))?;
+            engine
+                .request_identity_access(&session_id, GrantKind::IdentityPropose)
+                .await
+                .map_err(|e| anyhow::anyhow!("Grant error: {:?}", e))?;
+
+            match action {
+                IdentityAction::Commitment => {
+                    let commitment = engine
+                        .get_identity_commitment(&session_id)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed to derive commitment: {:?}", e))?;
+                    println!("╔══════════════════════════════════════════════════════════╗");
+                    println!("║             LEZ IDENTITY ACCOUNTABILITY                  ║");
+                    println!("╠══════════════════════════════════════════════════════════╣");
+                    println!("║ Master Identity Commitment (Hex):                        ║");
+                    println!("║ {:<56} ║", hex::encode(commitment.as_bytes()));
+                    println!("╚══════════════════════════════════════════════════════════╝");
+                }
+                IdentityAction::Nullifier { scope } => {
+                    let nullifier = engine
+                        .derive_scoped_nullifier(&session_id, &scope)
+                        .await
+                        .map_err(|e| {
+                            anyhow::anyhow!("Failed to derive scoped nullifier: {:?}", e)
+                        })?;
+                    println!("Scope ID:         {}", scope);
+                    println!("Scoped Nullifier: {}", hex::encode(nullifier.as_bytes()));
+                }
+                IdentityAction::Attest { scope, message } => {
+                    let attestation = engine
+                        .sign_identity_attestation(&session_id, &scope, message.as_bytes())
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed to sign attestation: {:?}", e))?;
+                    println!("Scope ID:          {}", scope);
+                    println!(
+                        "Scoped Nullifier:  {}",
+                        hex::encode(attestation.nullifier.as_bytes())
+                    );
+                    println!("BIP-340 Signature: {}", hex::encode(attestation.signature));
                 }
             }
         }
