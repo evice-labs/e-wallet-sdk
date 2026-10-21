@@ -5,6 +5,8 @@ members = [
     "crates/sdk-ffi",
     "crates/cli",
     "crates/evidence-tool",
+    "programs/testimonial-program",
+    "tools/dispatcher",
     "integration-tests",
 ]
 
@@ -31,8 +33,9 @@ sequencer_stake_core  = { git = "https://github.com/logos-blockchain/logos-execu
 program_loader_core   = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "program_loader_core" }
 
 # SDK internal crates
-sdk-engine  = { path = "crates/sdk-engine" }
-sdk-ffi     = { path = "crates/sdk-ffi" }
+sdk-engine          = { path = "crates/sdk-engine" }
+sdk-ffi             = { path = "crates/sdk-ffi" }
+testimonial-program = { path = "programs/testimonial-program" }
 
 # Third-party crates
 anyhow          = "1.0.98"

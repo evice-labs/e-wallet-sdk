@@ -6,3 +6,6 @@ Cargo.lock
 .DS_Store
 .idea/
 .vscode/
+dev-env/.sequencer_home/
+dev-env/.dev_wallet/
+*.log
