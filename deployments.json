@@ -1,0 +1,15 @@
+{
+  "network": "standalone",
+  "sequencer_rpc": "http://127.0.0.1:3040",
+  "testimonial_program_header": "Public/4Tp7QXy8vW6UEVexbp7sbnAhPxU3EZftc6f7c3B3VEMo",
+  "networks": {
+    "standalone": {
+      "sequencer_rpc": "http://127.0.0.1:3040",
+      "testimonial_program_header": "Public/4Tp7QXy8vW6UEVexbp7sbnAhPxU3EZftc6f7c3B3VEMo"
+    },
+    "testnet": {
+      "sequencer_rpc": "https://testnet.lez.logos.co",
+      "testimonial_program_header": "Public/D7ADNV9oTPsS1qT5swbLsec4SZfsHodvJqkw4QqYGMBV"
+    }
+  }
+}
