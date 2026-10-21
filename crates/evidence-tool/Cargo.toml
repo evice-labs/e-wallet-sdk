@@ -14,6 +14,7 @@ wallet.workspace = true
 lee.workspace = true
 lee_core.workspace = true
 common.workspace = true
+testimonial-program.workspace = true
 
 clap.workspace = true
 tokio.workspace = true
@@ -22,3 +23,4 @@ chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 hex.workspace = true
+sha2.workspace = true
