@@ -34,10 +34,11 @@ impl TestimonialDecoder {
                         .and_then(|h| h.as_str())
                     {
                         let clean = hdr.trim_start_matches("Public/");
-                        if let Ok(id) = AccountId::from_str(clean) {
-                            if !known.contains(&id) {
-                                known.push(id);
-                            }
+                        if let Some(id) = AccountId::from_str(clean)
+                            .ok()
+                            .filter(|id| !known.contains(id))
+                        {
+                            known.push(id);
                         }
                     }
                 }

@@ -141,13 +141,13 @@ pub fn get_wallet_core(network: &str) -> Result<WalletCore> {
             .pub_account_signing_key(alice_id)
             .is_none()
         {
-            if let Ok(alice_key) = lee::PrivateKey::from_str(ALICE_KEY_HEX) {
-                wallet_core
-                    .storage_mut()
-                    .key_chain_mut()
-                    .add_imported_public_account(alice_key);
-                let _ = wallet_core.store_persistent_data();
-            }
+            let alice_key = lee::PrivateKey::from_str(ALICE_KEY_HEX)
+                .map_err(|e| anyhow::anyhow!("Failed to parse Alice private key: {e}"))?;
+            wallet_core
+                .storage_mut()
+                .key_chain_mut()
+                .add_imported_public_account(alice_key);
+            let _ = wallet_core.store_persistent_data();
         }
         Ok(wallet_core)
     } else {
