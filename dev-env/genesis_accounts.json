@@ -1,5 +1,5 @@
 {
-  "description": "Pre-funded Genesis Accounts fixture for LEZ Wallet SDK development and automated testing",
+  "description": "Pre-funded Genesis Accounts fixture for Evice Wallet SDK development and automated testing",
   "network": "standalone-dev",
   "sequencer_rpc": "http://127.0.0.1:3040",
   "accounts": {

@@ -3,7 +3,7 @@ name = "sdk-ffi"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "C-ABI FFI exports for the LEZ Wallet SDK engine"
+description = "C-ABI FFI exports for the Evice Wallet SDK engine (Logos Execution Zone)"
 
 [lib]
 crate-type = ["cdylib", "staticlib", "rlib"]

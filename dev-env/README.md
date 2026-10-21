@@ -1,6 +1,6 @@
-## LEZ Wallet SDK — Standalone Development Environment (`dev-env`)
+## Evice Wallet SDK — Standalone Development Environment (`dev-env`)
 
-This directory provides the **supporting configuration fixtures and accounts** for the local development environment of the Logos Execution Zone (LEZ) Wallet Provider SDK. The environment runs an authentic LEZ sequencer in **standalone mode** (with an in-memory mocked Bedrock L1 layer) and pre-funded genesis accounts. It requires **no external internet connection and zero reliance on external testnet faucets**.
+This directory provides the **supporting configuration fixtures and accounts** for the local development environment of the Evice Wallet SDK (for Logos Execution Zone). The environment runs an authentic LEZ sequencer in **standalone mode** (with an in-memory mocked Bedrock L1 layer) and pre-funded genesis accounts. It requires **no external internet connection and zero reliance on external testnet faucets**.
 
 ## 1. Architectural Highlights
 
@@ -84,11 +84,11 @@ just dev-logs
 Point your wallet configuration to the local sequencer by copying [`wallet_config.json`](wallet_config.json) to your wallet data directory:
 
 ```bash
-mkdir -p ~/.lez-wallet
-cp dev-env/wallet_config.json ~/.lez-wallet/wallet_config.json
+mkdir -p ~/.evice-wallet
+cp dev-env/wallet_config.json ~/.evice-wallet/wallet_config.json
 
 # Check wallet diagnostic banner
-cargo run --bin lez-wallet -- info
+cargo run --bin evice-wallet -- info
 ```
 
 ### Step 4: Fund Fresh Accounts (Local Dispenser)
@@ -105,9 +105,9 @@ just dev-fund Public/891ae258f92ca8447af6cf09c41d96b3a06187d098b91ab2cc17b42e3c4
 ```
 
 > [!TIP]
-> **Direct CLI Transfer:** You can also import or transfer directly using the Alice Genesis Key via the `lez-wallet` CLI:
+> **Direct CLI Transfer:** You can also import or transfer directly using the Alice Genesis Key via the `evice-wallet` CLI:
 > ```bash
-> cargo run --bin lez-wallet -- transfer public \
+> cargo run --bin evice-wallet -- transfer public \
 >     --from Public/6aa4c365699b89d963ef85a59868b9612b6001f90750b4970662a62776332e81 \
 >     --to <RECIPIENT_ADDRESS> \
 >     --amount 5000000
