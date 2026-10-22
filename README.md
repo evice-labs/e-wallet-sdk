@@ -1,6 +1,6 @@
 ## Evice Wallet SDK
 
-> **Evice Wallet & Provider SDK (by Evice Labs)** — A modular, high-performance wallet engine and dApp integration SDK for the Logos Execution Zone (LEZ).
+> **Evice Wallet & Provider SDK for Logos Execution Zone** — A modular, high-performance wallet engine and dApp integration SDK for the Logos Execution Zone (LEZ).
 
 ## Overview
 
