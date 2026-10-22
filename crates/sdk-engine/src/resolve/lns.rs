@@ -47,9 +47,9 @@ pub struct LnsConfig {
 impl Default for LnsConfig {
     fn default() -> Self {
         use std::str::FromStr;
-        // Default testnet registry
+        // Default testnet registry (LNS v5)
         let registry_program_id =
-            AccountId::from_str("66nUvzJtTxA729aUpTcAWDrb7cV9Heb2bDzceHQhLYad").unwrap_or_default();
+            AccountId::from_str("38jEfVV1RCyMzu1FGbYcCn5FqxCxKyY58VgzjruAh2gq").unwrap_or_default();
         Self {
             registry_program_id,
             enabled: true,
@@ -297,7 +297,7 @@ mod tests {
         assert_ne!(config.registry_program_id, AccountId::default());
         assert_eq!(
             config.registry_program_id.to_string(),
-            "66nUvzJtTxA729aUpTcAWDrb7cV9Heb2bDzceHQhLYad"
+            "38jEfVV1RCyMzu1FGbYcCn5FqxCxKyY58VgzjruAh2gq"
         );
     }
 
