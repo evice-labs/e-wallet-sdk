@@ -103,7 +103,8 @@ impl LnsResolver {
     /// Normalise a `.lez` name input.
     /// Returns `Some(name)` (without ".lez") if valid, `None` if not a .lez name.
     pub fn normalise(input: &str) -> Option<String> {
-        let trimmed = input.trim().to_lowercase();
+        // ASCII only: Unicode lowercasing maps lookalikes such as U+212A KELVIN SIGN to 'k'.
+        let trimmed = input.trim().to_ascii_lowercase();
         let name = trimmed.strip_suffix(".lez")?;
 
         // Validate: 1-32 chars, [a-z0-9-], no leading/trailing hyphen
@@ -235,6 +236,12 @@ mod tests {
         // 33 chars — too long
         let long = format!("{}.lez", "a".repeat(33));
         assert_eq!(LnsResolver::normalise(&long), None);
+    }
+
+    #[test]
+    fn normalise_rejects_non_ascii_case_folding() {
+        // U+212A KELVIN SIGN lowercases to ASCII 'k' under full Unicode rules.
+        assert_eq!(LnsResolver::normalise("\u{212A}ate.lez"), None);
     }
 
     #[test]
