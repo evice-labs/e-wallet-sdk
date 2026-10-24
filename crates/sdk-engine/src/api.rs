@@ -84,11 +84,8 @@ pub struct SdkEngine {
     wallet: Arc<Mutex<WalletCore>>,
     sessions: SessionStore,
     requests: RequestStore,
-    #[allow(dead_code)]
     tx_queue: TxQueue,
-    #[allow(dead_code)]
     decoders: DecoderRegistry,
-    #[allow(dead_code)]
     verifier: Box<dyn ProgramVerifier>,
     resolver: Box<dyn NameResolver>,
     store: Arc<Mutex<PersistentStore>>,
@@ -164,6 +161,13 @@ pub trait DAppApi {
     ) -> impl std::future::Future<Output = SdkResult<()>> + Send;
 
     fn resolve_name(
+        &self,
+        session_id: &SessionId,
+        name: &str,
+    ) -> impl std::future::Future<Output = SdkResult<crate::resolve::ResolvedDestination>> + Send;
+
+    /// Resolve a `.lez` name directly from on-chain state, bypassing the cache.
+    fn resolve_name_fresh(
         &self,
         session_id: &SessionId,
         name: &str,
@@ -426,6 +430,16 @@ impl SdkEngine {
     pub fn config(&self) -> &SdkConfig {
         &self.config
     }
+
+    /// Clear the entire LNS name resolution cache.
+    pub fn clear_lns_cache(&self) {
+        self.resolver.clear_cache();
+    }
+
+    /// Evict a specific LNS name from the resolution cache immediately.
+    pub fn evict_lns_name(&self, name: &str) {
+        self.resolver.evict(name);
+    }
 }
 
 impl DAppApi for SdkEngine {
@@ -519,6 +533,11 @@ impl DAppApi for SdkEngine {
         let effects =
             EffectSimulator::native_transfer(from, to_account, amount, wallet::DEFAULT_GAS_LIMIT);
 
+        let verification = self
+            .verifier
+            .verify(&lee_core::native_token::NATIVE_TOKEN_PROGRAM_ID)
+            .await;
+
         let prompt = ApprovalPrompt {
             request: request.clone(),
             summary,
@@ -529,11 +548,17 @@ impl DAppApi for SdkEngine {
                 .map(|s| s.caller_identity.clone())
                 .unwrap_or_else(|| "unknown".into()),
             effects: Some(format!("{:?}", effects.source)),
-            verification_status: None,
+            verification_status: Some(verification.to_string()),
             warnings: effects.warnings,
         };
 
         self.requests.insert(request).await;
+        self.tx_queue
+            .enqueue(crate::queue::QueueEntry {
+                request_id: request_id.clone(),
+                priority: 0,
+            })
+            .await;
 
         let handler = self.approval_handler.clone();
         let requests = self.requests.clone();
@@ -615,6 +640,8 @@ impl DAppApi for SdkEngine {
             wallet::DEFAULT_GAS_LIMIT,
         );
 
+        let verification = self.verifier.verify(&definition).await;
+
         let prompt = ApprovalPrompt {
             request: request.clone(),
             summary,
@@ -625,14 +652,21 @@ impl DAppApi for SdkEngine {
                 .map(|s| s.caller_identity.clone())
                 .unwrap_or_else(|| "unknown".into()),
             effects: Some(format!("{:?}", effects.source)),
-            verification_status: None,
+            verification_status: Some(verification.to_string()),
             warnings: effects.warnings,
         };
 
         self.requests.insert(request).await;
+        self.tx_queue
+            .enqueue(crate::queue::QueueEntry {
+                request_id: request_id.clone(),
+                priority: 0,
+            })
+            .await;
 
         let handler = self.approval_handler.clone();
         let requests = self.requests.clone();
+        let wallet = self.wallet.clone();
         let rid = request_id.clone();
         let timeout = self.config.approval_timeout;
 
@@ -641,6 +675,31 @@ impl DAppApi for SdkEngine {
             match decision {
                 ApprovalDecision::Approve => {
                     requests.set_status(&rid, RequestStatus::Approved).await;
+                    let w = wallet.lock().await;
+                    let accounts = vec![
+                        wallet::AccountIdentity::Public(from_holding)
+                            .select_program_actor_state(definition),
+                        wallet::AccountIdentity::PublicNoSign(to_holding)
+                            .select_program_actor_state(definition),
+                    ];
+                    let message = amount.to_le_bytes().to_vec();
+                    match w.send_pub_tx(accounts, 0, message).await {
+                        Ok(tx_hash) => {
+                            requests
+                                .set_status(&rid, RequestStatus::Submitted { tx_hash })
+                                .await;
+                        }
+                        Err(e) => {
+                            requests
+                                .set_status(
+                                    &rid,
+                                    RequestStatus::Failed {
+                                        reason: format!("{:?}", e),
+                                    },
+                                )
+                                .await;
+                        }
+                    }
                 }
                 ApprovalDecision::Reject => {
                     requests.set_status(&rid, RequestStatus::Rejected).await;
@@ -670,15 +729,48 @@ impl DAppApi for SdkEngine {
         let request = PendingRequest::new(
             session_id.clone(),
             RequestKind::GenericCall {
-                mentions,
-                calldata,
+                mentions: mentions.clone(),
+                calldata: calldata.clone(),
                 description,
             },
         );
         let request_id = request.id.clone();
 
-        let summary = ApprovalPrompt::auto_summary(&request);
-        let effects = EffectSimulator::unavailable(wallet::DEFAULT_GAS_LIMIT);
+        let decoded = mentions
+            .first()
+            .map(|primary| self.decoders.decode(primary, &calldata));
+
+        let summary = if let Some(ref d) = decoded {
+            if d.operation != "Unknown" {
+                format!("{}: {}", d.program, d.operation)
+            } else {
+                ApprovalPrompt::auto_summary(&request)
+            }
+        } else {
+            ApprovalPrompt::auto_summary(&request)
+        };
+
+        let effects_source = if let Some(ref d) = decoded {
+            if d.operation != "Unknown" {
+                format!("Decoded({})", d.operation)
+            } else {
+                format!(
+                    "{:?}",
+                    EffectSimulator::unavailable(wallet::DEFAULT_GAS_LIMIT).source
+                )
+            }
+        } else {
+            format!(
+                "{:?}",
+                EffectSimulator::unavailable(wallet::DEFAULT_GAS_LIMIT).source
+            )
+        };
+
+        let verification = if let Some(primary) = mentions.first() {
+            Some(self.verifier.verify(primary).await.to_string())
+        } else {
+            None
+        };
 
         let prompt = ApprovalPrompt {
             request: request.clone(),
@@ -689,23 +781,67 @@ impl DAppApi for SdkEngine {
                 .await
                 .map(|s| s.caller_identity.clone())
                 .unwrap_or_else(|| "unknown".into()),
-            effects: Some(format!("{:?}", effects.source)),
-            verification_status: None,
-            warnings: effects.warnings,
+            effects: Some(effects_source),
+            verification_status: verification,
+            warnings: vec![],
         };
 
         self.requests.insert(request).await;
+        self.tx_queue
+            .enqueue(crate::queue::QueueEntry {
+                request_id: request_id.clone(),
+                priority: 0,
+            })
+            .await;
 
         let handler = self.approval_handler.clone();
         let requests = self.requests.clone();
+        let wallet = self.wallet.clone();
         let rid = request_id.clone();
         let timeout = self.config.approval_timeout;
+        let mentions_to_send = mentions.clone();
+        let calldata_to_send = calldata.clone();
 
         tokio::spawn(async move {
             let decision = handler.request_approval(prompt, timeout).await;
             match decision {
                 ApprovalDecision::Approve => {
                     requests.set_status(&rid, RequestStatus::Approved).await;
+                    let w = wallet.lock().await;
+                    if let Some(primary) = mentions_to_send.first() {
+                        let program = *primary;
+                        let mut accounts = Vec::with_capacity(mentions_to_send.len());
+                        for (idx, &acc) in mentions_to_send.iter().enumerate() {
+                            if idx == 0 {
+                                accounts.push(
+                                    wallet::AccountIdentity::Public(acc)
+                                        .select_program_actor_state(program),
+                                );
+                            } else {
+                                accounts.push(
+                                    wallet::AccountIdentity::PublicNoSign(acc)
+                                        .select_program_actor_state(program),
+                                );
+                            }
+                        }
+                        match w.send_pub_tx(accounts, 0, calldata_to_send).await {
+                            Ok(tx_hash) => {
+                                requests
+                                    .set_status(&rid, RequestStatus::Submitted { tx_hash })
+                                    .await;
+                            }
+                            Err(e) => {
+                                requests
+                                    .set_status(
+                                        &rid,
+                                        RequestStatus::Failed {
+                                            reason: format!("{:?}", e),
+                                        },
+                                    )
+                                    .await;
+                            }
+                        }
+                    }
                 }
                 ApprovalDecision::Reject => {
                     requests.set_status(&rid, RequestStatus::Rejected).await;
@@ -742,6 +878,22 @@ impl DAppApi for SdkEngine {
     ) -> SdkResult<crate::resolve::ResolvedDestination> {
         let _session = self.validate_session(session_id).await?;
         match self.resolver.resolve(name).await {
+            Ok(Some(dest)) => Ok(dest),
+            Ok(None) => Err(SdkError::InvalidArgument(format!(
+                "'{}' is not a .lez name",
+                name
+            ))),
+            Err(e) => Err(SdkError::NameResolutionError(e.to_string())),
+        }
+    }
+
+    async fn resolve_name_fresh(
+        &self,
+        session_id: &SessionId,
+        name: &str,
+    ) -> SdkResult<crate::resolve::ResolvedDestination> {
+        let _session = self.validate_session(session_id).await?;
+        match self.resolver.resolve_fresh(name).await {
             Ok(Some(dest)) => Ok(dest),
             Ok(None) => Err(SdkError::InvalidArgument(format!(
                 "'{}' is not a .lez name",
@@ -877,8 +1029,13 @@ impl OwnerApi for SdkEngine {
         Ok(())
     }
 
-    async fn unlock(&self, _password: &str) -> SdkResult<()> {
-        // TODO: verify password
+    async fn unlock(&self, password: &str) -> SdkResult<()> {
+        let storage_path = &self.config.wallet_storage_path;
+        if storage_path.exists()
+            && wallet::storage::Storage::from_path(storage_path, password).is_err()
+        {
+            return Err(SdkError::InvalidPassword);
+        }
         let mut store = self.store.lock().await;
         store.state_mut().locked = false;
         store.save().map_err(SdkError::Internal)?;

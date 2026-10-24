@@ -60,4 +60,18 @@ pub trait NameResolver: Send + Sync {
     /// - `Ok(Some(dest))` — resolution succeeded.
     /// - `Err(e)` — resolution failed (name not found, expired, network, etc.).
     async fn resolve(&self, input: &str) -> Result<Option<ResolvedDestination>, ResolveError>;
+
+    /// Resolve a name directly from on-chain state, bypassing any cached entry.
+    async fn resolve_fresh(
+        &self,
+        input: &str,
+    ) -> Result<Option<ResolvedDestination>, ResolveError> {
+        self.resolve(input).await
+    }
+
+    /// Clear all cached resolution entries.
+    fn clear_cache(&self) {}
+
+    /// Evict a specific name from the resolution cache immediately.
+    fn evict(&self, _name: &str) {}
 }
