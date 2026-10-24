@@ -26,8 +26,8 @@ const ARGON2_LANES: u32 = 1;
 const ARGON2_OUTPUT_LEN: usize = 32;
 const ARGON2_SALT: &[u8] = b"logos-names/v5";
 
-/// Cache TTL: resolved names are cached in memory for 5 minutes.
-const CACHE_TTL: Duration = Duration::from_secs(300);
+/// Cache TTL: resolved names are cached in memory for 1 minutes.
+const CACHE_TTL: Duration = Duration::from_secs(60);
 
 /// Grace period: 30 days in milliseconds (SPEC §6: 2,592,000,000 ms).
 pub const GRACE_PERIOD_MS: u64 = 2_592_000_000;
@@ -159,6 +159,13 @@ impl LnsResolver {
     /// Clear the resolution cache (e.g. on wallet lock).
     pub fn clear_cache(&self) {
         self.cache.clear();
+    }
+
+    /// Evict a specific name from the resolution cache immediately.
+    pub fn evict(&self, input: &str) {
+        if let Some(name) = Self::normalise(input) {
+            self.cache.remove(&name);
+        }
     }
 
     /// Normalise a `.lez` name input.
@@ -309,9 +316,13 @@ impl LnsResolver {
     }
 }
 
-#[async_trait]
-impl NameResolver for LnsResolver {
-    async fn resolve(&self, input: &str) -> Result<Option<ResolvedDestination>, ResolveError> {
+impl LnsResolver {
+    /// Internal resolve with optional cache bypass.
+    pub async fn resolve_internal(
+        &self,
+        input: &str,
+        bypass_cache: bool,
+    ) -> Result<Option<ResolvedDestination>, ResolveError> {
         if !self.is_enabled() {
             return Err(ResolveError::Disabled);
         }
@@ -321,8 +332,9 @@ impl NameResolver for LnsResolver {
             None => return Ok(None), // Not a .lez name — passthrough
         };
 
-        // 1. Check in-memory cache
-        if let Some(entry) = self.cache.get(&name)
+        // 1. Check in-memory cache if not bypassing
+        if !bypass_cache
+            && let Some(entry) = self.cache.get(&name)
             && entry.is_fresh()
         {
             return Ok(Some(entry.result.clone()));
@@ -425,6 +437,30 @@ impl NameResolver for LnsResolver {
         );
 
         Ok(Some(destination))
+    }
+}
+
+#[async_trait]
+impl NameResolver for LnsResolver {
+    async fn resolve(&self, input: &str) -> Result<Option<ResolvedDestination>, ResolveError> {
+        self.resolve_internal(input, false).await
+    }
+
+    async fn resolve_fresh(
+        &self,
+        input: &str,
+    ) -> Result<Option<ResolvedDestination>, ResolveError> {
+        self.resolve_internal(input, true).await
+    }
+
+    fn clear_cache(&self) {
+        self.cache.clear();
+    }
+
+    fn evict(&self, input: &str) {
+        if let Some(name) = Self::normalise(input) {
+            self.cache.remove(&name);
+        }
     }
 }
 
@@ -666,6 +702,35 @@ mod tests {
         let res = resolver.resolve("cached.lez").await.unwrap();
         assert!(res.is_some());
         assert_eq!(res.unwrap().name, "cached");
+    }
+
+    #[tokio::test]
+    async fn test_cache_evict_and_fresh_bypass() {
+        let resolver = LnsResolver::new(LnsConfig::default());
+        let dest = ResolvedDestination {
+            name: "cached".into(),
+            account: Some(AccountId::default()),
+            npk: None,
+            vpk: None,
+            expires: u64::MAX,
+            texts: vec![],
+        };
+        resolver.cache.insert(
+            "cached".into(),
+            CachedEntry {
+                result: dest.clone(),
+                fetched_at: Instant::now(),
+            },
+        );
+
+        // Cached lookup succeeds from memory
+        assert!(resolver.cache.contains_key("cached"));
+        let cached_res = resolver.resolve("cached.lez").await.unwrap();
+        assert!(cached_res.is_some());
+
+        // Evict removes it immediately
+        resolver.evict("cached.lez");
+        assert!(!resolver.cache.contains_key("cached"));
     }
 
     #[tokio::test]

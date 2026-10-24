@@ -334,19 +334,19 @@ fn init_or_open_engine(
 /// Parses an account ID string or resolves a .lez LNS name to an AccountId.
 async fn resolve_or_parse_account(engine: &SdkEngine, target: &str) -> Result<AccountId> {
     if target.ends_with(".lez") {
-        println!("Resolving LNS name '{}'...", target);
+        println!("Resolving LNS name '{}' (fresh on-chain lookup)...", target);
         let session_id = engine
             .connect("evice-wallet-cli".into(), sdk_engine::API_VERSION)
             .await
             .map_err(|e| anyhow::anyhow!("Session error: {:?}", e))?;
-        match engine.resolve_name(&session_id, target).await {
+        match engine.resolve_name_fresh(&session_id, target).await {
             Ok(dest) => {
                 if let Some(account_id) = dest.account {
                     println!("[✓] Resolved '{}' -> {}", target, account_id);
                     Ok(account_id)
                 } else {
                     bail!(
-                        "LNS name '{}' exists but has no published account address",
+                        "Username '{}' exists but has no active receiving account (it may have been transferred or unlinked). Transaction canceled for security.",
                         target
                     )
                 }

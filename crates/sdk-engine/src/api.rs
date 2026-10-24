@@ -166,6 +166,13 @@ pub trait DAppApi {
         name: &str,
     ) -> impl std::future::Future<Output = SdkResult<crate::resolve::ResolvedDestination>> + Send;
 
+    /// Resolve a `.lez` name directly from on-chain state, bypassing the cache.
+    fn resolve_name_fresh(
+        &self,
+        session_id: &SessionId,
+        name: &str,
+    ) -> impl std::future::Future<Output = SdkResult<crate::resolve::ResolvedDestination>> + Send;
+
     /// Request identity permission grants (`IdentityRead` or `IdentityPropose`) for this session.
     fn request_identity_access(
         &self,
@@ -422,6 +429,16 @@ impl SdkEngine {
 
     pub fn config(&self) -> &SdkConfig {
         &self.config
+    }
+
+    /// Clear the entire LNS name resolution cache.
+    pub fn clear_lns_cache(&self) {
+        self.resolver.clear_cache();
+    }
+
+    /// Evict a specific LNS name from the resolution cache immediately.
+    pub fn evict_lns_name(&self, name: &str) {
+        self.resolver.evict(name);
     }
 }
 
@@ -861,6 +878,22 @@ impl DAppApi for SdkEngine {
     ) -> SdkResult<crate::resolve::ResolvedDestination> {
         let _session = self.validate_session(session_id).await?;
         match self.resolver.resolve(name).await {
+            Ok(Some(dest)) => Ok(dest),
+            Ok(None) => Err(SdkError::InvalidArgument(format!(
+                "'{}' is not a .lez name",
+                name
+            ))),
+            Err(e) => Err(SdkError::NameResolutionError(e.to_string())),
+        }
+    }
+
+    async fn resolve_name_fresh(
+        &self,
+        session_id: &SessionId,
+        name: &str,
+    ) -> SdkResult<crate::resolve::ResolvedDestination> {
+        let _session = self.validate_session(session_id).await?;
+        match self.resolver.resolve_fresh(name).await {
             Ok(Some(dest)) => Ok(dest),
             Ok(None) => Err(SdkError::InvalidArgument(format!(
                 "'{}' is not a .lez name",
