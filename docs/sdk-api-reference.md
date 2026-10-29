@@ -1,6 +1,6 @@
 ## Evice Wallet SDK — API Reference Manual
 
-> **Version:** Draft v1.0 (Alpha)  
+> **Version:** Draft v0.1   
 > **Target Audience:** dApp Developers, Core Module (`wallet-provider`) Integrators, and Native Client Engineers.
 
 ## 1. Architectural Overview & API Surfaces
@@ -77,7 +77,7 @@ Retrieves engine metadata, API compatibility version, and runtime status.
 ```json
 {
   "ok": true,
-  "sdk_version": "0.1.0",
+  "sdk_version": "0.1.1",
   "api_version": 1,
   "network": "standalone-local",
   "wallet_initialized": true,
