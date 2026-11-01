@@ -237,6 +237,12 @@ pub trait OwnerApi {
 
     fn unlock(&self, password: &str) -> impl std::future::Future<Output = SdkResult<()>> + Send;
 
+    fn change_password(
+        &self,
+        old_password: &str,
+        new_password: &str,
+    ) -> impl std::future::Future<Output = SdkResult<()>> + Send;
+
     fn create_account_public(
         &self,
         label: Option<String>,
@@ -407,8 +413,15 @@ impl SdkEngine {
         };
         let _ = wallet
             .storage_mut()
-            .add_label(Label::new(label), privacy_account);
-        wallet.store_persistent_data().map_err(SdkError::Internal)?;
+            .add_label(Label::new(label.clone()), privacy_account);
+        let _ = wallet.store_persistent_data();
+
+        let mut store = self.store.lock().await;
+        store
+            .state_mut()
+            .account_labels
+            .insert(account.to_string(), label);
+        store.save().map_err(SdkError::Internal)?;
         Ok(())
     }
 
@@ -1043,6 +1056,24 @@ impl OwnerApi for SdkEngine {
         Ok(())
     }
 
+    async fn change_password(&self, old_password: &str, new_password: &str) -> SdkResult<()> {
+        let storage_path = &self.config.wallet_storage_path;
+        if storage_path.exists()
+            && wallet::storage::Storage::from_path(storage_path, old_password).is_err()
+        {
+            return Err(SdkError::InvalidPassword);
+        }
+        let mut wallet = self.wallet.lock().await;
+        wallet
+            .set_password(new_password)
+            .map_err(SdkError::Internal)?;
+        let mut store = self.store.lock().await;
+        store.state_mut().locked = false;
+        store.save().map_err(SdkError::Internal)?;
+        log::info!("Wallet encryption password changed successfully");
+        Ok(())
+    }
+
     async fn create_account_public(&self, label: Option<String>) -> SdkResult<AccountId> {
         {
             let store = self.store.lock().await;
@@ -1055,10 +1086,17 @@ impl OwnerApi for SdkEngine {
 
         if let Some(label_str) = label {
             let _ = wallet.storage_mut().add_label(
-                Label::new(label_str),
+                Label::new(label_str.clone()),
                 AccountIdWithPrivacy::Public(account_id),
             );
-            wallet.store_persistent_data().map_err(SdkError::Internal)?;
+            let _ = wallet.store_persistent_data();
+
+            let mut store = self.store.lock().await;
+            store
+                .state_mut()
+                .account_labels
+                .insert(account_id.to_string(), label_str);
+            let _ = store.save();
         }
         Ok(account_id)
     }
@@ -1075,16 +1113,26 @@ impl OwnerApi for SdkEngine {
 
         if let Some(label_str) = label {
             let _ = wallet.storage_mut().add_label(
-                Label::new(label_str),
+                Label::new(label_str.clone()),
                 AccountIdWithPrivacy::Private(account_id),
             );
-            wallet.store_persistent_data().map_err(SdkError::Internal)?;
+            let _ = wallet.store_persistent_data();
+
+            let mut store = self.store.lock().await;
+            store
+                .state_mut()
+                .account_labels
+                .insert(account_id.to_string(), label_str);
+            let _ = store.save();
         }
         Ok(account_id)
     }
 
     async fn list_all_accounts(&self) -> SdkResult<Vec<AccountView>> {
         let wallet = self.wallet.lock().await;
+        let store = self.store.lock().await;
+        let custom_labels = &store.state().account_labels;
+
         // Use the key chain to enumerate all accounts
         let key_chain = wallet.storage().key_chain();
         let public_accounts = key_chain.public_account_ids();
@@ -1092,12 +1140,16 @@ impl OwnerApi for SdkEngine {
         let mut views = Vec::new();
         for (account_id, _) in public_accounts {
             let balance = wallet.get_account_balance(account_id).await.ok();
-            // Try to find a label via resolve
-            let label_text = wallet
-                .storage()
-                .labels_for_account(AccountIdWithPrivacy::Public(account_id))
-                .next()
-                .map(|l| l.as_ref().to_string());
+            let label_text = custom_labels
+                .get(&account_id.to_string())
+                .cloned()
+                .or_else(|| {
+                    wallet
+                        .storage()
+                        .labels_for_account(AccountIdWithPrivacy::Public(account_id))
+                        .next()
+                        .map(|l| l.as_ref().to_string())
+                });
             views.push(AccountView {
                 account_id,
                 privacy: AccountPrivacy::Public,
@@ -1108,11 +1160,16 @@ impl OwnerApi for SdkEngine {
 
         let private_accounts = key_chain.private_account_ids();
         for (account_id, _) in private_accounts {
-            let label_text = wallet
-                .storage()
-                .labels_for_account(AccountIdWithPrivacy::Private(account_id))
-                .next()
-                .map(|l| l.as_ref().to_string());
+            let label_text = custom_labels
+                .get(&account_id.to_string())
+                .cloned()
+                .or_else(|| {
+                    wallet
+                        .storage()
+                        .labels_for_account(AccountIdWithPrivacy::Private(account_id))
+                        .next()
+                        .map(|l| l.as_ref().to_string())
+                });
             views.push(AccountView {
                 account_id,
                 privacy: AccountPrivacy::Private,
