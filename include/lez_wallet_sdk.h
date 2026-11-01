@@ -104,6 +104,13 @@ char *lez_wallet_lock(struct FfiSdkEngine *engine);
 char *lez_wallet_unlock(struct FfiSdkEngine *engine, const char *password);
 
 /**
+ * Change wallet encryption password.
+ */
+char *lez_wallet_change_password(struct FfiSdkEngine *engine,
+                                const char *old_password,
+                                const char *new_password);
+
+/**
  * Create a new public account with an optional label.
  */
 char *lez_wallet_create_account_public(struct FfiSdkEngine *engine, const char *label);
