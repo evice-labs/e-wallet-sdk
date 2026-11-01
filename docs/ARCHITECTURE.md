@@ -157,9 +157,11 @@ pub trait OwnerApi {
     fn restore_wallet(&self, mnemonic: &Mnemonic, password: &str) -> Future<Output = SdkResult<()>>;
     fn lock(&self) -> Future<Output = SdkResult<()>>;
     fn unlock(&self, password: &str) -> Future<Output = SdkResult<()>>;
+    fn change_password(&self, old_password: &str, new_password: &str) -> Future<Output = SdkResult<()>>;
     fn create_account_public(&self, label: Option<String>) -> Future<Output = SdkResult<AccountId>>;
     fn create_account_private(&self, label: Option<String>) -> Future<Output = SdkResult<AccountId>>;
     fn list_all_accounts(&self) -> Future<Output = SdkResult<Vec<AccountView>>>;
+    fn set_account_label(&self, account_id: &AccountId, label: String) -> Future<Output = SdkResult<()>>;
     fn list_sessions(&self) -> Future<Output = SdkResult<Vec<Session>>>;
     fn revoke_session(&self, session_id: &SessionId) -> Future<Output = SdkResult<()>>;
 }
@@ -291,7 +293,7 @@ Cache in DashMap & Return ResolvedDestination { name, account, npk, vpk, expires
 
 ### 4.8 Crash-Safe Atomic Persistence (`store.rs`)
 
-State durability follows strict POSIX crash-resilience standards:
+State durability follows strict POSIX crash-resilience standards. In addition to system toggles, `SdkPersistentState` persists custom human-readable aliases (`account_labels: HashMap<String, String>`) so that account renaming takes immediate effect and remains durable across daemon/application restarts:
 
 ```
 [In-Memory SdkPersistentState]
@@ -477,6 +479,7 @@ To fulfill on-chain adoption verification, verifiable attribution, and automated
 | **Accidental Storage Overwrite** | Guard checks pre-existing files; requires explicit `--force` flag before re-initializing existing directories. | `cli/src/main.rs` |
 | **False Success on Empty Directory** | `ensure_wallet_exists` enforces storage verification prior to executing wallet/account operations. | `cli/src/main.rs` |
 | **Keystore Authentication Bypass on Unlock** | Verifies passphrases against encrypted storage file on disk via `wallet::storage::Storage::from_path`, preventing unauthorized state unlocking with arbitrary passwords. | `api.rs` (`unlock`) |
+| **Passphrase Rotation Vulnerability** | Validates current password against on-disk keystore before re-encrypting with new credentials; prevents unauthorized passphrase resets. | `api.rs` (`change_password`) |
 | **Unregistered LNS Handle Fund Loss** | Pre-flight destination resolution verifies LNS records exist on-chain and hold valid public receiving keys before transaction creation; rejects unresolvable domains immediately. | `api.rs`, `resolve/lns.rs` |
 | **Tampered / Forged LNS Profiles** | Authenticated AES-256-GCM tag verification bound to associated data `logos-names/v5/record`, followed by strict `profile.name == input_name` consistency checking. | `resolve/lns.rs` |
 

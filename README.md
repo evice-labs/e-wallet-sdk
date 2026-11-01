@@ -92,9 +92,11 @@ lez-wallet-sdk/
 - In-memory cache with 5-minute TTL, cleared automatically upon wallet lock.
 - User-controllable toggle (`lns_enabled`) with graceful fallback to raw 32-byte account IDs.
 
-#### 7. Resilient Storage (`store.rs`)
+#### 7. Resilient Storage & Passphrase Rotation (`store.rs`, `api.rs`)
 - Atomic persistence using write-then-rename (`.tmp` → target file) preventing state corruption during unexpected crashes or power loss.
 - Automatic `.bak` backup retention and fallback recovery.
+- Durable account alias mapping (`account_labels`) ensuring account renames overwrite prior aliases and survive restarts.
+- Master vault passphrase rotation (`OwnerApi::change_password`) verifying current credentials before re-encrypting persistent keystores.
 
 #### 8. Identity Accountability & Accountable Pseudonymity (`identity/`)
 - Pure client-side zero-knowledge accountable pseudonymity derived from the master BIP-39 root seed (`lez/identity/v1/secret`).
@@ -108,7 +110,7 @@ lez-wallet-sdk/
 - Native C-ABI surface (`extern "C"`) exporting opaque engine handles (`FfiSdkEngine`), built as `cdylib`, `staticlib`, and `rlib`.
 - Panic-safe execution boundary wrapping operations in `catch_unwind` and returning ABI-safe JSON payloads (`{"ok": true, ...}` / `{"ok": false, "error": "..."}`).
 - Non-blocking approval bridge (`FfiApprovalCallback`) supporting synchronous decisions and asynchronous deferred decision submission (`lez_wallet_submit_approval_decision`) for Qt/QML modals.
-- Complete coverage of `OwnerApi`, `DAppApi`, and Identity Accountability APIs.
+- Complete coverage of `OwnerApi` (including `lez_wallet_change_password` and `lez_wallet_set_account_label`), `DAppApi`, and Identity Accountability APIs.
 - Header generation via `cbindgen` producing [`include/lez_wallet_sdk.h`](include/lez_wallet_sdk.h) with strict C/C++ linkage guards.
 
 #### 10. Comprehensive Command-Line Interface (`crates/cli`, `evice-wallet`)
