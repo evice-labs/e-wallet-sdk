@@ -2,12 +2,12 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use lee::AccountId;
 use program_loader_core::MAX_SEGMENT_DATA_LEN;
+use sequencer_service_rpc::SequencerClient;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::str::FromStr;
-use sequencer_service_rpc::SequencerClient;
 use testimonial_program::{TestimonialInstruction, derive_testimonial_pda_seed};
 use wallet::{
     WalletCore, account::AccountIdWithPrivacy, cli::CliAccountMention,

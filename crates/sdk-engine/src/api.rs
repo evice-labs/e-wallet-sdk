@@ -9,11 +9,11 @@
 
 use bip39::Mnemonic;
 use lee::AccountId;
+use sequencer_service_rpc::SequencerClient;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use sequencer_service_rpc::SequencerClient;
 use wallet::WalletCore;
 use wallet::account::{AccountIdWithPrivacy, Label};
 
