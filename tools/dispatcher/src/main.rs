@@ -7,6 +7,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::str::FromStr;
+use sequencer_service_rpc::SequencerClient;
 use testimonial_program::{TestimonialInstruction, derive_testimonial_pda_seed};
 use wallet::{
     WalletCore, account::AccountIdWithPrivacy, cli::CliAccountMention,
@@ -95,7 +96,7 @@ fn get_default_submission_id() -> Result<[u8; 32]> {
     Ok(hasher.finalize().into())
 }
 
-pub fn get_wallet_core(network: &str) -> Result<WalletCore> {
+pub fn get_wallet_core(network: &str) -> Result<WalletCore<SequencerClient>> {
     if network == "standalone" {
         let dev_dir = std::path::PathBuf::from("dev-env/.dev_wallet");
         std::fs::create_dir_all(&dev_dir)?;

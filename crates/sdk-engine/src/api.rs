@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
+use sequencer_service_rpc::SequencerClient;
 use wallet::WalletCore;
 use wallet::account::{AccountIdWithPrivacy, Label};
 
@@ -81,7 +82,7 @@ pub enum AccountPrivacy {
 
 /// The central SDK engine.
 pub struct SdkEngine {
-    wallet: Arc<Mutex<WalletCore>>,
+    wallet: Arc<Mutex<WalletCore<SequencerClient>>>,
     sessions: SessionStore,
     requests: RequestStore,
     tx_queue: TxQueue,
@@ -262,7 +263,7 @@ pub trait OwnerApi {
 
 impl SdkEngine {
     pub fn new(
-        wallet: WalletCore,
+        wallet: WalletCore<SequencerClient>,
         approval_handler: Arc<dyn ApprovalHandler>,
         config: SdkConfig,
     ) -> SdkResult<Self> {
@@ -423,7 +424,7 @@ impl SdkEngine {
         &self.approval_handler
     }
 
-    pub fn wallet(&self) -> &Arc<Mutex<WalletCore>> {
+    pub fn wallet(&self) -> &Arc<Mutex<WalletCore<SequencerClient>>> {
         &self.wallet
     }
 
