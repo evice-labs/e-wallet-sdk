@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -30,3 +31,14 @@ jobs:
       - run: cargo check --workspace
       - run: cargo test --workspace
       - run: cargo build --workspace --all-targets
+      - name: Build and package release dylib for macOS Apple Silicon
+        run: |
+          cargo build --release -p sdk-ffi
+          install_name_tool -id @rpath/liblez_wallet_sdk.dylib target/release/libsdk_ffi.dylib
+          codesign -s - -f target/release/libsdk_ffi.dylib
+          cp target/release/libsdk_ffi.dylib liblez_wallet_sdk.dylib
+      - name: Upload macOS Apple Silicon SDK dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: liblez_wallet_sdk-macos-arm64
+          path: e-wallet-sdk/liblez_wallet_sdk.dylib
