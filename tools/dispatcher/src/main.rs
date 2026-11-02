@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use lee::AccountId;
 use program_loader_core::MAX_SEGMENT_DATA_LEN;
+use sequencer_service_rpc::SequencerClient;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -95,7 +96,7 @@ fn get_default_submission_id() -> Result<[u8; 32]> {
     Ok(hasher.finalize().into())
 }
 
-pub fn get_wallet_core(network: &str) -> Result<WalletCore> {
+pub fn get_wallet_core(network: &str) -> Result<WalletCore<SequencerClient>> {
     if network == "standalone" {
         let dev_dir = std::path::PathBuf::from("dev-env/.dev_wallet");
         std::fs::create_dir_all(&dev_dir)?;

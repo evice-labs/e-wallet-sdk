@@ -77,7 +77,7 @@ Retrieves engine metadata, API compatibility version, and runtime status.
 ```json
 {
   "ok": true,
-  "sdk_version": "0.1.1",
+  "sdk_version": "0.1.2",
   "api_version": 1,
   "network": "standalone-local",
   "wallet_initialized": true,
@@ -250,12 +250,26 @@ Privileged interface restricted to the wallet owner / host environment:
 | `lez_wallet_restore_wallet(engine, mnemonic, password)` | Restores an existing wallet from a 12- or 24-word recovery phrase. | `mnemonic`: Normalized space-delimited phrase; `password`: New passphrase. |
 | `lez_wallet_lock(engine)` | Immediately zeroes key material in memory and clears cached session states. | None. |
 | `lez_wallet_unlock(engine, password)` | Re-derives encryption keys and unlocks local storage. | `password`: Master passphrase. |
+| `lez_wallet_change_password(engine, old_password, new_password)` | Re-encrypts keystore storage and updates the master passphrase. | `old_password`: Current passphrase; `new_password`: New passphrase. |
 | `lez_wallet_create_account_public(engine, label)` | Derives a new transparent public account (`Public/...`). | `label`: Optional UTF-8 display alias. |
 | `lez_wallet_create_account_private(engine, label)` | Derives a new shielded zero-knowledge private account. | `label`: Optional UTF-8 display alias. |
 | `lez_wallet_list_all_accounts(engine)` | Lists all registered accounts with labels, types, and balances. | None. |
 | `lez_wallet_grant_account(engine, session_id, account_id, grant_kind)` | Issues an explicit privilege grant to an active dApp session. | `grant_kind`: `"read"` or `"propose"`. |
 | `lez_wallet_revoke_session(engine, session_id)` | Immediately revokes an authorized session and all its grants. | `session_id`: Target session identifier. |
-| `lez_wallet_set_account_label(engine, account_id, label)` | Renames or sets a human-readable alias on an account. | `account_id`: Target account; `label`: New alias string. |
+| `lez_wallet_set_account_label(engine, account_id, label)` | Renames or sets a human-readable alias on an account, persisting it atomically to override old aliases. | `account_id`: Target account; `label`: New alias string. |
+
+### 4.1 Vault Passphrase Rotation (`change_password`)
+Allows the wallet owner to change the master encryption passphrase protecting local keystore storage:
+- **FFI Signature:** `lez_wallet_change_password(engine: *mut FfiSdkEngine, old_password: *const c_char, new_password: *const c_char) -> *mut c_char`
+- **Authentication:** Validates `old_password` against current storage credentials before re-encrypting.
+- **Success Response:** `{"ok": true}`
+- **Error Response:** `{"ok": false, "error": "InvalidPassword"}` when `old_password` fails validation.
+
+### 4.2 Account Alias & Label Management (`set_account_label`)
+Associates a friendly display name with an account:
+- **FFI Signature:** `lez_wallet_set_account_label(engine: *mut FfiSdkEngine, account_id: *const c_char, label: *const c_char) -> *mut c_char`
+- **Persistence:** Saved atomically into `SdkPersistentState` (`account_labels`), ensuring that renaming an account replaces previously bound labels and survives process restarts.
+- **Success Response:** `{"ok": true}`
 
 ## 5. Non-Blocking Approval Modal Bridge
 

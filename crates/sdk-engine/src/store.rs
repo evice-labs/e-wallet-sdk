@@ -20,6 +20,8 @@ pub struct SdkPersistentState {
     pub sequencer_url_override: Option<String>,
     pub gas_limit_override: Option<u64>,
     pub lns_registry_id: Option<String>,
+    #[serde(default)]
+    pub account_labels: std::collections::HashMap<String, String>,
 }
 
 /// Atomic persistent store.
@@ -153,6 +155,7 @@ mod tests {
             sequencer_url_override: Some("http://test:1234".into()),
             gas_limit_override: None,
             lns_registry_id: None,
+            account_labels: std::collections::HashMap::new(),
         };
         let data = serde_json::to_vec_pretty(&state).unwrap();
         fs::write(&bak_path, &data).unwrap();

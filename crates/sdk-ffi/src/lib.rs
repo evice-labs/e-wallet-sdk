@@ -625,6 +625,36 @@ pub unsafe extern "C" fn lez_wallet_unlock(
     })
 }
 
+/// Change the wallet encryption password.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lez_wallet_change_password(
+    engine: *mut FfiSdkEngine,
+    old_password: *const c_char,
+    new_password: *const c_char,
+) -> *mut c_char {
+    catch_ffi(error_json("FFI panic"), || {
+        if engine.is_null() {
+            return error_json("Null engine handle");
+        }
+        let old_pass_str = match unsafe { parse_c_str(old_password) } {
+            Ok(s) => s,
+            Err(e) => return error_json(e),
+        };
+        let new_pass_str = match unsafe { parse_c_str(new_password) } {
+            Ok(s) => s,
+            Err(e) => return error_json(e),
+        };
+        let ffi = unsafe { &*engine };
+        match ffi
+            .runtime
+            .block_on(ffi.engine.change_password(old_pass_str, new_pass_str))
+        {
+            Ok(_) => success_json(),
+            Err(e) => error_json(&format!("{:?}", e)),
+        }
+    })
+}
+
 /// Create a new public account with an optional label.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lez_wallet_create_account_public(
