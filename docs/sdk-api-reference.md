@@ -203,6 +203,42 @@ Monitors or cancels the lifecycle of an immutable request proposal.
 }
 ```
 
+### 3.8a `propose_contract_call`
+Proposes an explicit smart contract execution specifying target program ID, payer account ID, account mentions, calldata, and human-readable description.
+- **FFI Signature:** `lez_wallet_propose_contract_call(engine: *mut FfiSdkEngine, session_id: *const c_char, program_id: *const c_char, payer_id: *const c_char, mentions_json: *const c_char, calldata_hex: *const c_char, description: *const c_char) -> *mut c_char`
+- **Parameters:**
+  - `session_id`: Active session identifier.
+  - `program_id`: Target smart contract Base58 AccountId.
+  - `payer_id`: Account authorizing transaction execution and paying fees.
+  - `mentions_json`: JSON array of string AccountIds mentioned in transaction calldata.
+  - `calldata_hex`: Hex-encoded instruction calldata bytes.
+  - `description`: Optional human-readable transaction summary.
+- **Behavior:**
+  - Validates that `payer_id` has been granted `GrantKind::Propose`.
+  - Configures target program actor states for signers (`AccountIdentity::Public` or `AccountIdentity::PrivateOwned`) and non-signing mentions (`AccountIdentity::PublicNoSign`).
+  - Routes through approval handler and dispatches via `send_pub_tx_paid_by`.
+- **Response Format:**
+```json
+{
+  "ok": true,
+  "request_id": "e4b1fc9a-728b-4c9c-9e45-f290eac667ee",
+  "status": "pending_approval"
+}
+```
+
+### 3.8b Token Program Holdings API
+Queries and registers fungible token program asset holdings across sessions:
+- **`list_token_holdings(session_id)`:**
+  Lists tracked token holdings accessible to the session.
+  - **FFI Signature:** `lez_wallet_list_token_holdings(engine, session_id) -> *mut c_char`
+  - **Response:** `{"ok": true, "tokens": [{"holding_id": "...", "definition_id": "...", "symbol": "LOGOS", "name": "Logos", "is_shielded": false}]}`
+- **`list_all_token_holdings()`:**
+  Privileged Owner API returning all token holdings tracked by the engine keystore.
+  - **FFI Signature:** `lez_wallet_list_all_token_holdings(engine) -> *mut c_char`
+- **`register_token_holding(holding_id, definition_id, symbol, name, is_shielded)`:**
+  Privileged Owner API registering a new token holding, persisting it atomically to disk (`token_holdings: Vec<TokenHoldingEntry>`).
+  - **FFI Signature:** `lez_wallet_register_token_holding(engine, holding_id, definition_id, symbol, name, is_shielded) -> *mut c_char`
+
 ### 3.9 `resolve_name`
 Resolves a human-readable `.lez` domain name using the clean-room Logos Name Service (LNS) client against live on-chain registry state.
 - **FFI Signature:** `lez_wallet_resolve_name(engine: *mut FfiSdkEngine, session_id: *const c_char, name: *const c_char) -> *mut c_char`
