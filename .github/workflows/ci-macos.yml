@@ -34,9 +34,11 @@ jobs:
       - name: Build and package release dylib for macOS Apple Silicon
         run: |
           cargo build --release -p sdk-ffi
-          install_name_tool -id @rpath/liblez_wallet_sdk.dylib target/release/libsdk_ffi.dylib
-          codesign -s - -f target/release/libsdk_ffi.dylib
-          cp target/release/libsdk_ffi.dylib liblez_wallet_sdk.dylib
+          DYLIB_PATH="target/release/liblez_wallet_sdk.dylib"
+          if [ ! -f "$DYLIB_PATH" ]; then DYLIB_PATH="target/release/libsdk_ffi.dylib"; fi
+          install_name_tool -id @rpath/liblez_wallet_sdk.dylib "$DYLIB_PATH"
+          codesign -s - -f "$DYLIB_PATH"
+          cp "$DYLIB_PATH" liblez_wallet_sdk.dylib
       - name: Upload macOS Apple Silicon SDK dylib
         uses: actions/upload-artifact@v4
         with:
