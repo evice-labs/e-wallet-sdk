@@ -216,6 +216,40 @@ char *lez_wallet_propose_transaction(struct FfiSdkEngine *engine,
                                      const char *description);
 
 /**
+ * Propose an explicit smart contract call with program_id and payer_id.
+ * `mentions_json`: JSON array of AccountId strings.
+ * `calldata_hex`: Hex string of instruction calldata.
+ */
+char *lez_wallet_propose_contract_call(struct FfiSdkEngine *engine,
+                                       const char *session_id,
+                                       const char *program_id,
+                                       const char *payer_id,
+                                       const char *mentions_json,
+                                       const char *calldata_hex,
+                                       const char *description);
+
+/**
+ * List token holdings accessible to the session.
+ */
+char *lez_wallet_list_token_holdings(struct FfiSdkEngine *engine,
+                                     const char *session_id);
+
+/**
+ * Privileged Owner API: List all tracked token holdings.
+ */
+char *lez_wallet_list_all_token_holdings(struct FfiSdkEngine *engine);
+
+/**
+ * Privileged Owner API: Register or update a tracked token holding.
+ */
+char *lez_wallet_register_token_holding(struct FfiSdkEngine *engine,
+                                        const char *holding_id,
+                                        const char *definition_id,
+                                        const char *symbol,
+                                        const char *name,
+                                        bool is_shielded);
+
+/**
  * Get the current status of a proposed transaction request.
  */
 char *lez_wallet_get_request_status(struct FfiSdkEngine *engine, const char *request_id);

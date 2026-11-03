@@ -6,6 +6,7 @@ license.workspace = true
 description = "C-ABI FFI exports for the Evice Wallet SDK engine (Logos Execution Zone)"
 
 [lib]
+name = "lez_wallet_sdk"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
