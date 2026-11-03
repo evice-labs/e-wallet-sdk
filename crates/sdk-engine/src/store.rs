@@ -11,6 +11,17 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+/// Tracked on-chain token holding metadata.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TokenHoldingEntry {
+    pub holding_id: String,
+    pub definition_id: String,
+    pub symbol: String,
+    pub name: String,
+    #[serde(default)]
+    pub is_shielded: bool,
+}
+
 /// SDK-level persistent state that lives alongside the upstream wallet storage.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SdkPersistentState {
@@ -22,6 +33,8 @@ pub struct SdkPersistentState {
     pub lns_registry_id: Option<String>,
     #[serde(default)]
     pub account_labels: std::collections::HashMap<String, String>,
+    #[serde(default)]
+    pub token_holdings: Vec<TokenHoldingEntry>,
 }
 
 /// Atomic persistent store.
@@ -156,6 +169,7 @@ mod tests {
             gas_limit_override: None,
             lns_registry_id: None,
             account_labels: std::collections::HashMap::new(),
+            token_holdings: Vec::new(),
         };
         let data = serde_json::to_vec_pretty(&state).unwrap();
         fs::write(&bak_path, &data).unwrap();

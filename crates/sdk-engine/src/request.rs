@@ -60,6 +60,13 @@ pub enum RequestKind {
         calldata: Vec<u8>,
         description: Option<String>,
     },
+    ContractCall {
+        program_id: AccountId,
+        payer_id: AccountId,
+        mentions: Vec<AccountId>,
+        calldata: Vec<u8>,
+        description: Option<String>,
+    },
 }
 
 /// Lifecycle status of a request.

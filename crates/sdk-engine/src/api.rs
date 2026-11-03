@@ -80,6 +80,15 @@ pub enum AccountPrivacy {
     Private,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct TokenHoldingView {
+    pub holding_id: AccountId,
+    pub definition_id: AccountId,
+    pub symbol: String,
+    pub name: String,
+    pub is_shielded: bool,
+}
+
 /// The central SDK engine.
 pub struct SdkEngine {
     wallet: Arc<Mutex<WalletCore<SequencerClient>>>,
@@ -150,6 +159,21 @@ pub trait DAppApi {
         calldata: Vec<u8>,
         description: Option<String>,
     ) -> impl std::future::Future<Output = SdkResult<RequestId>> + Send;
+
+    fn propose_contract_call(
+        &self,
+        session_id: &SessionId,
+        program_id: AccountId,
+        payer_id: AccountId,
+        mentions: Vec<AccountId>,
+        calldata: Vec<u8>,
+        description: Option<String>,
+    ) -> impl std::future::Future<Output = SdkResult<RequestId>> + Send;
+
+    fn list_token_holdings(
+        &self,
+        session_id: &SessionId,
+    ) -> impl std::future::Future<Output = SdkResult<Vec<TokenHoldingView>>> + Send;
 
     fn get_request_status(
         &self,
@@ -265,6 +289,19 @@ pub trait OwnerApi {
         &self,
         session_id: &SessionId,
     ) -> impl std::future::Future<Output = SdkResult<()>> + Send;
+
+    fn register_token_holding(
+        &self,
+        holding_id: AccountId,
+        definition_id: AccountId,
+        symbol: String,
+        name: String,
+        is_shielded: bool,
+    ) -> impl std::future::Future<Output = SdkResult<()>> + Send;
+
+    fn list_all_token_holdings(
+        &self,
+    ) -> impl std::future::Future<Output = SdkResult<Vec<TokenHoldingView>>> + Send;
 }
 
 impl SdkEngine {
@@ -489,9 +526,28 @@ impl DAppApi for SdkEngine {
     }
 
     async fn request_accounts(&self, session_id: &SessionId) -> SdkResult<Vec<AccountView>> {
-        let _session = self.validate_session(session_id).await?;
-        // TODO: Show account picker UI via approval handler.
-        Ok(vec![])
+        let session = self.validate_session(session_id).await?;
+        let all_accounts = self.list_all_accounts().await?;
+
+        let selected = self
+            .approval_handler
+            .request_account_selection(
+                session.caller_identity.clone(),
+                all_accounts,
+                self.config.approval_timeout,
+            )
+            .await;
+
+        for acc in &selected {
+            self.sessions
+                .update(session_id, |s| {
+                    s.add_grant(*acc, GrantKind::Read);
+                    s.add_grant(*acc, GrantKind::Propose);
+                })
+                .await;
+        }
+
+        self.list_accounts(session_id).await
     }
 
     async fn list_accounts(&self, session_id: &SessionId) -> SdkResult<Vec<AccountView>> {
@@ -531,7 +587,40 @@ impl DAppApi for SdkEngine {
     ) -> SdkResult<RequestId> {
         self.require_grant(session_id, &from, GrantKind::Propose)
             .await?;
+
+        if amount == 0 {
+            return Err(SdkError::InvalidArgument(
+                "Transfer amount must be greater than zero".into(),
+            ));
+        }
+
         let to_account = self.resolve_destination(&to).await?;
+
+        if from == to_account {
+            let wallet = self.wallet.lock().await;
+            let is_from_private = wallet
+                .storage()
+                .key_chain()
+                .managed_private_account(from)
+                .is_some()
+                || wallet.storage().key_chain().private_account(from).is_some();
+            let is_to_private = wallet
+                .storage()
+                .key_chain()
+                .managed_private_account(to_account)
+                .is_some()
+                || wallet
+                    .storage()
+                    .key_chain()
+                    .private_account(to_account)
+                    .is_some();
+            if is_from_private == is_to_private {
+                return Err(SdkError::InvalidArgument(format!(
+                    "Cannot transfer to the same account: {}",
+                    from
+                )));
+            }
+        }
 
         let request = PendingRequest::new(
             session_id.clone(),
@@ -586,12 +675,40 @@ impl DAppApi for SdkEngine {
                 ApprovalDecision::Approve => {
                     requests.set_status(&rid, RequestStatus::Approved).await;
                     let w = wallet.lock().await;
+                    let is_from_private = w
+                        .storage()
+                        .key_chain()
+                        .managed_private_account(from)
+                        .is_some()
+                        || w.storage().key_chain().private_account(from).is_some();
+                    let is_to_private = w
+                        .storage()
+                        .key_chain()
+                        .managed_private_account(to_account)
+                        .is_some()
+                        || w.storage()
+                            .key_chain()
+                            .private_account(to_account)
+                            .is_some();
+
+                    let sender = if is_from_private {
+                        wallet::AccountIdentity::PrivateOwned(from)
+                    } else {
+                        wallet::AccountIdentity::Public(from)
+                    };
+
+                    let recipient = if is_to_private {
+                        wallet::AccountIdentity::PrivateOwned(to_account)
+                    } else {
+                        wallet::AccountIdentity::PublicNoSign(to_account)
+                    };
+
                     let facade =
                         wallet::program_facades::native_token_transfer::NativeTokenTransfer(&w);
                     match facade
                         .transfer(
-                            wallet::AccountIdentity::Public(from),
-                            wallet::AccountIdentity::PublicNoSign(to_account),
+                            sender,
+                            recipient,
                             amount,
                             wallet::program_facades::CreditDelivery::Automatic,
                         )
@@ -633,6 +750,42 @@ impl DAppApi for SdkEngine {
     ) -> SdkResult<RequestId> {
         self.require_grant(session_id, &from_holding, GrantKind::Propose)
             .await?;
+
+        if amount == 0 {
+            return Err(SdkError::InvalidArgument(
+                "Transfer amount must be greater than zero".into(),
+            ));
+        }
+
+        if from_holding == to_holding {
+            let wallet = self.wallet.lock().await;
+            let is_from_private = wallet
+                .storage()
+                .key_chain()
+                .managed_private_account(from_holding)
+                .is_some()
+                || wallet
+                    .storage()
+                    .key_chain()
+                    .private_account(from_holding)
+                    .is_some();
+            let is_to_private = wallet
+                .storage()
+                .key_chain()
+                .managed_private_account(to_holding)
+                .is_some()
+                || wallet
+                    .storage()
+                    .key_chain()
+                    .private_account(to_holding)
+                    .is_some();
+            if is_from_private == is_to_private {
+                return Err(SdkError::InvalidArgument(format!(
+                    "Cannot transfer to the same holding account: {}",
+                    from_holding
+                )));
+            }
+        }
 
         let request = PendingRequest::new(
             session_id.clone(),
@@ -690,12 +843,42 @@ impl DAppApi for SdkEngine {
                 ApprovalDecision::Approve => {
                     requests.set_status(&rid, RequestStatus::Approved).await;
                     let w = wallet.lock().await;
-                    let accounts = vec![
+                    let is_from_private = w
+                        .storage()
+                        .key_chain()
+                        .managed_private_account(from_holding)
+                        .is_some()
+                        || w.storage()
+                            .key_chain()
+                            .private_account(from_holding)
+                            .is_some();
+                    let is_to_private = w
+                        .storage()
+                        .key_chain()
+                        .managed_private_account(to_holding)
+                        .is_some()
+                        || w.storage()
+                            .key_chain()
+                            .private_account(to_holding)
+                            .is_some();
+
+                    let sender_actor = if is_from_private {
+                        wallet::AccountIdentity::PrivateOwned(from_holding)
+                            .select_program_actor_state(definition)
+                    } else {
                         wallet::AccountIdentity::Public(from_holding)
-                            .select_program_actor_state(definition),
+                            .select_program_actor_state(definition)
+                    };
+
+                    let recipient_actor = if is_to_private {
+                        wallet::AccountIdentity::PrivateOwned(to_holding)
+                            .select_program_actor_state(definition)
+                    } else {
                         wallet::AccountIdentity::PublicNoSign(to_holding)
-                            .select_program_actor_state(definition),
-                    ];
+                            .select_program_actor_state(definition)
+                    };
+
+                    let accounts = vec![sender_actor, recipient_actor];
                     let message = amount.to_le_bytes().to_vec();
                     match w.send_pub_tx(accounts, 0, message).await {
                         Ok(tx_hash) => {
@@ -826,17 +1009,26 @@ impl DAppApi for SdkEngine {
                         let program = *primary;
                         let mut accounts = Vec::with_capacity(mentions_to_send.len());
                         for (idx, &acc) in mentions_to_send.iter().enumerate() {
-                            if idx == 0 {
-                                accounts.push(
-                                    wallet::AccountIdentity::Public(acc)
-                                        .select_program_actor_state(program),
-                                );
+                            let is_private = w
+                                .storage()
+                                .key_chain()
+                                .managed_private_account(acc)
+                                .is_some()
+                                || w.storage().key_chain().private_account(acc).is_some();
+                            let is_owned_public = w
+                                .storage()
+                                .key_chain()
+                                .public_account_ids()
+                                .any(|(id, _)| id == acc);
+
+                            let identity = if is_private {
+                                wallet::AccountIdentity::PrivateOwned(acc)
+                            } else if idx == 0 || is_owned_public {
+                                wallet::AccountIdentity::Public(acc)
                             } else {
-                                accounts.push(
-                                    wallet::AccountIdentity::PublicNoSign(acc)
-                                        .select_program_actor_state(program),
-                                );
-                            }
+                                wallet::AccountIdentity::PublicNoSign(acc)
+                            };
+                            accounts.push(identity.select_program_actor_state(program));
                         }
                         match w.send_pub_tx(accounts, 0, calldata_to_send).await {
                             Ok(tx_hash) => {
@@ -864,6 +1056,147 @@ impl DAppApi for SdkEngine {
         });
 
         Ok(request_id)
+    }
+
+    async fn propose_contract_call(
+        &self,
+        session_id: &SessionId,
+        program_id: AccountId,
+        payer_id: AccountId,
+        mentions: Vec<AccountId>,
+        calldata: Vec<u8>,
+        description: Option<String>,
+    ) -> SdkResult<RequestId> {
+        self.require_grant(session_id, &payer_id, GrantKind::Propose)
+            .await?;
+
+        let request = PendingRequest::new(
+            session_id.clone(),
+            RequestKind::ContractCall {
+                program_id,
+                payer_id,
+                mentions: mentions.clone(),
+                calldata: calldata.clone(),
+                description: description.clone(),
+            },
+        );
+        let request_id = request.id.clone();
+
+        let decoded = self.decoders.decode(&program_id, &calldata);
+        let summary = if decoded.operation != "Unknown" {
+            format!("{}: {}", decoded.program, decoded.operation)
+        } else if let Some(ref desc) = description {
+            desc.clone()
+        } else {
+            ApprovalPrompt::auto_summary(&request)
+        };
+
+        let effects_source = if decoded.operation != "Unknown" {
+            format!("Decoded({})", decoded.operation)
+        } else {
+            format!(
+                "{:?}",
+                EffectSimulator::unavailable(wallet::DEFAULT_GAS_LIMIT).source
+            )
+        };
+
+        let verification = self.verifier.verify(&program_id).await;
+
+        let prompt = ApprovalPrompt {
+            request: request.clone(),
+            summary,
+            dapp_identity: self
+                .sessions
+                .get(session_id)
+                .await
+                .map(|s| s.caller_identity.clone())
+                .unwrap_or_else(|| "unknown".into()),
+            effects: Some(effects_source),
+            verification_status: Some(verification.to_string()),
+            warnings: vec![],
+        };
+
+        self.requests.insert(request).await;
+        self.tx_queue
+            .enqueue(crate::queue::QueueEntry {
+                request_id: request_id.clone(),
+                priority: 0,
+            })
+            .await;
+
+        let handler = self.approval_handler.clone();
+        let requests = self.requests.clone();
+        let wallet = self.wallet.clone();
+        let rid = request_id.clone();
+        let timeout = self.config.approval_timeout;
+
+        tokio::spawn(async move {
+            let decision = handler.request_approval(prompt, timeout).await;
+            match decision {
+                ApprovalDecision::Approve => {
+                    requests.set_status(&rid, RequestStatus::Approved).await;
+                    let w = wallet.lock().await;
+
+                    let mut accounts = Vec::with_capacity(mentions.len());
+                    for &acc in &mentions {
+                        let is_private = w
+                            .storage()
+                            .key_chain()
+                            .managed_private_account(acc)
+                            .is_some()
+                            || w.storage().key_chain().private_account(acc).is_some();
+                        let is_owned_public = w
+                            .storage()
+                            .key_chain()
+                            .public_account_ids()
+                            .any(|(id, _)| id == acc);
+
+                        let identity = if is_private {
+                            wallet::AccountIdentity::PrivateOwned(acc)
+                        } else if acc == payer_id || is_owned_public {
+                            wallet::AccountIdentity::Public(acc)
+                        } else {
+                            wallet::AccountIdentity::PublicNoSign(acc)
+                        };
+                        accounts.push(identity.select_program_actor_state(program_id));
+                    }
+
+                    match w
+                        .send_pub_tx_paid_by(accounts, 0, calldata, Some(payer_id))
+                        .await
+                    {
+                        Ok(tx_hash) => {
+                            requests
+                                .set_status(&rid, RequestStatus::Submitted { tx_hash })
+                                .await;
+                        }
+                        Err(e) => {
+                            requests
+                                .set_status(
+                                    &rid,
+                                    RequestStatus::Failed {
+                                        reason: format!("{:?}", e),
+                                    },
+                                )
+                                .await;
+                        }
+                    }
+                }
+                ApprovalDecision::Reject => {
+                    requests.set_status(&rid, RequestStatus::Rejected).await;
+                }
+            }
+        });
+
+        Ok(request_id)
+    }
+
+    async fn list_token_holdings(
+        &self,
+        session_id: &SessionId,
+    ) -> SdkResult<Vec<TokenHoldingView>> {
+        let _session = self.validate_session(session_id).await?;
+        self.list_all_token_holdings().await
     }
 
     async fn get_request_status(&self, request_id: &RequestId) -> SdkResult<RequestStatus> {
@@ -1191,6 +1524,59 @@ impl OwnerApi for SdkEngine {
         } else {
             Err(SdkError::SessionNotFound(session_id.clone()))
         }
+    }
+
+    async fn register_token_holding(
+        &self,
+        holding_id: AccountId,
+        definition_id: AccountId,
+        symbol: String,
+        name: String,
+        is_shielded: bool,
+    ) -> SdkResult<()> {
+        let mut store = self.store.lock().await;
+        let entry = crate::store::TokenHoldingEntry {
+            holding_id: holding_id.to_string(),
+            definition_id: definition_id.to_string(),
+            symbol,
+            name,
+            is_shielded,
+        };
+        if let Some(existing) = store
+            .state_mut()
+            .token_holdings
+            .iter_mut()
+            .find(|h| h.holding_id == entry.holding_id)
+        {
+            *existing = entry;
+        } else {
+            store.state_mut().token_holdings.push(entry);
+        }
+        store.save().map_err(SdkError::Internal)?;
+        Ok(())
+    }
+
+    async fn list_all_token_holdings(&self) -> SdkResult<Vec<TokenHoldingView>> {
+        let store = self.store.lock().await;
+        let mut views = Vec::new();
+        for entry in &store.state().token_holdings {
+            let holding_id = match parse_account_id(&entry.holding_id) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            let definition_id = match parse_account_id(&entry.definition_id) {
+                Ok(id) => id,
+                Err(_) => continue,
+            };
+            views.push(TokenHoldingView {
+                holding_id,
+                definition_id,
+                symbol: entry.symbol.clone(),
+                name: entry.name.clone(),
+                is_shielded: entry.is_shielded,
+            });
+        }
+        Ok(views)
     }
 }
 
