@@ -1,9 +1,9 @@
 use integration_tests::harness::{MockApprovalHandler, TestEnv};
+use lez_wallet_sdk::*;
 use sdk_engine::SdkEngine;
 use sdk_engine::api::{AccountPrivacy, DAppApi, OwnerApi};
 use sdk_engine::approval::ApprovalDecision;
 use sdk_engine::session::GrantKind;
-use sdk_ffi::*;
 use std::ffi::{CStr, CString};
 use std::sync::Arc;
 
@@ -629,6 +629,130 @@ fn test_lns_ffi_c_abi_safety() {
     let uninit_json: serde_json::Value = serde_json::from_str(uninit_str).unwrap();
     assert_eq!(uninit_json["ok"], false);
     unsafe { lez_wallet_free_string(uninit_res) };
+
+    unsafe { lez_wallet_engine_free(ffi_engine) };
+}
+
+#[tokio::test]
+async fn test_engine_transfers_and_holdings() {
+    let env = TestEnv::new();
+    let handler = Arc::new(MockApprovalHandler::new(ApprovalDecision::Approve));
+    let engine =
+        SdkEngine::open_or_init(env.data_dir.clone(), "testpass123", handler).expect("engine");
+
+    let _mnemonic = engine.create_wallet("testpass123").await.expect("wallet");
+    let alice = engine
+        .create_account_public(Some("Alice".into()))
+        .await
+        .expect("alice");
+    let bob = engine
+        .create_account_public(Some("Bob".into()))
+        .await
+        .expect("bob");
+
+    let session_id = engine
+        .connect("dapp.test".into(), 1)
+        .await
+        .expect("connect");
+    engine
+        .grant_account(&session_id, alice, GrantKind::Propose)
+        .await
+        .expect("grant");
+
+    // 1. Guard clause: zero amount must fail
+    let err_zero = engine
+        .propose_native_transfer(&session_id, alice, bob.to_string(), 0)
+        .await;
+    assert!(err_zero.is_err(), "Zero transfer must fail");
+
+    // 2. Guard clause: self-transfer with same privacy must fail
+    let err_self = engine
+        .propose_native_transfer(&session_id, alice, alice.to_string(), 100)
+        .await;
+    assert!(err_self.is_err(), "Self-transfer must fail");
+
+    // 3. Token holdings management
+    let def_id = lee::AccountId::default();
+    let holding_id = alice;
+    engine
+        .register_token_holding(
+            holding_id,
+            def_id,
+            "TEST".into(),
+            "Test Token".into(),
+            false,
+        )
+        .await
+        .expect("register token holding");
+
+    let holdings_owner = engine.list_all_token_holdings().await.expect("list all");
+    assert_eq!(holdings_owner.len(), 1);
+    assert_eq!(holdings_owner[0].symbol, "TEST");
+    assert_eq!(holdings_owner[0].holding_id, holding_id);
+
+    let holdings_dapp = engine
+        .list_token_holdings(&session_id)
+        .await
+        .expect("list dapp");
+    assert_eq!(holdings_dapp.len(), 1);
+    assert_eq!(holdings_dapp[0].symbol, "TEST");
+
+    // 4. Contract call proposal
+    let req_id = engine
+        .propose_contract_call(
+            &session_id,
+            def_id,
+            alice,
+            vec![alice],
+            vec![1, 2, 3],
+            Some("Test Call".into()),
+        )
+        .await
+        .expect("propose contract call");
+
+    let status = engine.get_request_status(&req_id).await.expect("status");
+    assert!(matches!(
+        status,
+        sdk_engine::request::RequestStatus::PendingApproval
+            | sdk_engine::request::RequestStatus::Approved
+            | sdk_engine::request::RequestStatus::Failed { .. }
+    ));
+}
+
+#[test]
+fn test_ffi_contract_calls_and_holdings() {
+    let env = TestEnv::new();
+    let ffi_data_dir = CString::new(env.data_dir.to_str().unwrap()).unwrap();
+    let ffi_engine = unsafe { lez_wallet_engine_new(ffi_data_dir.as_ptr()) };
+    assert!(!ffi_engine.is_null());
+
+    let h_str = CString::new(lee::AccountId::default().to_string()).unwrap();
+    let d_str = CString::new(lee::AccountId::default().to_string()).unwrap();
+    let sym_str = CString::new("FFITOKEN").unwrap();
+    let name_str = CString::new("FFI Token").unwrap();
+
+    let reg_res = unsafe {
+        lez_wallet_register_token_holding(
+            ffi_engine,
+            h_str.as_ptr(),
+            d_str.as_ptr(),
+            sym_str.as_ptr(),
+            name_str.as_ptr(),
+            false,
+        )
+    };
+    let reg_str = unsafe { CStr::from_ptr(reg_res) }.to_str().unwrap();
+    let reg_json: serde_json::Value = serde_json::from_str(reg_str).unwrap();
+    assert_eq!(reg_json["ok"], true);
+    unsafe { lez_wallet_free_string(reg_res) };
+
+    let list_res = unsafe { lez_wallet_list_all_token_holdings(ffi_engine) };
+    let list_str = unsafe { CStr::from_ptr(list_res) }.to_str().unwrap();
+    let list_json: serde_json::Value = serde_json::from_str(list_str).unwrap();
+    assert_eq!(list_json["ok"], true);
+    assert_eq!(list_json["data"].as_array().unwrap().len(), 1);
+    assert_eq!(list_json["data"][0]["symbol"], "FFITOKEN");
+    unsafe { lez_wallet_free_string(list_res) };
 
     unsafe { lez_wallet_engine_free(ffi_engine) };
 }

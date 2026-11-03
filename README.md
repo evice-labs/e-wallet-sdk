@@ -132,8 +132,16 @@ lez-wallet-sdk/
 - **zkVM Testimonial Smart Contract (`programs/testimonial-program`):** Embeds `SUBMISSION_ID` into submitter PDA records with strict invariant checks ($\le 280$ byte text, $\le 64$ byte moniker, submitter deduplication per submission ID).
 - **On-Chain Dispatcher Tool (`tools/dispatcher`, `lez-dispatcher`):** CLI tool for chunked program bytecode deployment via `ProgramLoader`, sending on-chain testimonial transactions, checking registry status, and dispatching raw instructions.
 - **Unified Deployment Registry (`deployments.json`):** Tracks deployed program header accounts across `standalone` (local) and `testnet` (public) environments, dynamically linked with `BuiltinVerifier` and `TestimonialDecoder`.
-- **Adoption Evidence Auditing (`crates/evidence-tool`):** Audits on-chain testimonial records against LP-0021 criteria (150 distinct submitters across required intervals).
+- **Adoption Evidence Auditing (`crates/evidence-tool`):** Audits on-chain testimonial records against verification criteria (150 distinct submitters across required intervals).
 - **Comprehensive Guide:** Complete build, deploy, and dispatch instructions documented in [`docs/program-deployment.md`](docs/program-deployment.md).
+
+#### 13. Native 4-Way Transfers & Smart Contract Dispatch (`api.rs`, `sdk-ffi`)
+- **Native 4-Way Transfer Execution:** Resolves sender and recipient account privacy via `AccountIdentity::PrivateOwned` and `AccountIdentity::Public`, supporting all four transfer vectors: Public ➝ Public, Public ➝ Private (Shielding), Private ➝ Public (Deshielding), and Private ➝ Private (Shielded).
+- **Strict Guard Clauses:** Prohibits zero-amount transfers (`"Transfer amount must be greater than zero"`) and validates self-transfers to reject identical-account transfers within the same privacy boundary while allowing cross-privacy shielding/unshielding.
+- **Idiomatic Smart Contract Invocations (`propose_contract_call`):** Dedicated API accepting `program_id`, `payer_id`, `mentions`, and instruction `calldata`, properly binding program actor states for signers and non-signing accounts.
+- **Token Program Holdings Registry:** Facades `list_token_holdings`, `register_token_holding`, and `list_all_token_holdings` backed by atomic disk persistence (`token_holdings: Vec<TokenHoldingEntry>`).
+- **Account Selection & Consent:** Resolves connecting dApp account selection prompts via `ApprovalHandler::request_account_selection`, granting `GrantKind::Read` and `GrantKind::Propose` to authorized accounts while filtering internal identity accounts from account listings.
+- **Logos DAO Governance Reference Mini-App:** Demonstrates end-to-end integration of Wallet Provider SDK and Identity Accountability (Domain 6) for anonymous, Sybil-resistant voting via scoped nullifiers and BIP-340 Schnorr ballot attestations.
 
 ## Quick Start
 

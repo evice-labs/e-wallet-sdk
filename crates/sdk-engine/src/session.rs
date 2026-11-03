@@ -116,6 +116,7 @@ impl Session {
     pub fn granted_accounts(&self) -> Vec<AccountId> {
         self.grants
             .iter()
+            .filter(|g| g.kind != GrantKind::IdentityRead && g.kind != GrantKind::IdentityPropose)
             .map(|g| g.account)
             .collect::<HashSet<_>>()
             .into_iter()

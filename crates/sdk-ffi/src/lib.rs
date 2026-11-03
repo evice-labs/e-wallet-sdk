@@ -320,10 +320,32 @@ impl From<&ApprovalPrompt> for ApprovalPromptDto {
                 RequestKind::NativeTransfer { .. } => "native_transfer".to_string(),
                 RequestKind::TokenTransfer { .. } => "token_transfer".to_string(),
                 RequestKind::GenericCall { .. } => "generic_call".to_string(),
+                RequestKind::ContractCall { .. } => "contract_call".to_string(),
             },
             effects: p.effects.clone(),
             verification_status: p.verification_status.clone(),
             warnings: p.warnings.clone(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct TokenHoldingDto {
+    pub holding_id: String,
+    pub definition_id: String,
+    pub symbol: String,
+    pub name: String,
+    pub is_shielded: bool,
+}
+
+impl From<&sdk_engine::api::TokenHoldingView> for TokenHoldingDto {
+    fn from(v: &sdk_engine::api::TokenHoldingView) -> Self {
+        Self {
+            holding_id: v.holding_id.to_string(),
+            definition_id: v.definition_id.to_string(),
+            symbol: v.symbol.clone(),
+            name: v.name.clone(),
+            is_shielded: v.is_shielded,
         }
     }
 }
@@ -1237,6 +1259,195 @@ pub unsafe extern "C" fn lez_wallet_propose_transaction(
                 });
                 to_c_string(&json.to_string())
             }
+            Err(e) => error_json(&format!("{:?}", e)),
+        }
+    })
+}
+
+/// Propose an explicit smart contract call with program_id and payer_id.
+/// `mentions_json`: JSON array of AccountId strings.
+/// `calldata_hex`: Hex string of instruction calldata.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lez_wallet_propose_contract_call(
+    engine: *mut FfiSdkEngine,
+    session_id: *const c_char,
+    program_id: *const c_char,
+    payer_id: *const c_char,
+    mentions_json: *const c_char,
+    calldata_hex: *const c_char,
+    description: *const c_char,
+) -> *mut c_char {
+    catch_ffi(error_json("FFI panic"), || {
+        if engine.is_null() {
+            return error_json("Null engine handle");
+        }
+        let sess_str = match unsafe { parse_c_str(session_id) } {
+            Ok(s) => s,
+            Err(e) => return error_json(e),
+        };
+        let prog_str = match unsafe { parse_c_str(program_id) } {
+            Ok(s) => s,
+            Err(e) => return error_json(e),
+        };
+        let payer_str = match unsafe { parse_c_str(payer_id) } {
+            Ok(s) => s,
+            Err(e) => return error_json(e),
+        };
+        let mentions_str = match unsafe { parse_c_str(mentions_json) } {
+            Ok(s) => s,
+            Err(e) => return error_json(e),
+        };
+        let calldata_str = match unsafe { parse_c_str(calldata_hex) } {
+            Ok(s) => s,
+            Err(e) => return error_json(e),
+        };
+        let desc_opt = match unsafe { parse_c_str(description) } {
+            Ok(s) if !s.is_empty() => Some(s.to_string()),
+            _ => None,
+        };
+
+        let sid = SessionId(sess_str.to_string());
+        let program = match AccountId::from_str(prog_str) {
+            Ok(a) => a,
+            Err(e) => return error_json(&format!("Invalid program_id: {:?}", e)),
+        };
+        let payer = match AccountId::from_str(payer_str) {
+            Ok(a) => a,
+            Err(e) => return error_json(&format!("Invalid payer_id: {:?}", e)),
+        };
+
+        let raw_mentions: Vec<String> = match serde_json::from_str(mentions_str) {
+            Ok(v) => v,
+            Err(e) => return error_json(&format!("Invalid mentions_json array: {:?}", e)),
+        };
+        let mut mentions = Vec::with_capacity(raw_mentions.len());
+        for m in raw_mentions {
+            match AccountId::from_str(&m) {
+                Ok(a) => mentions.push(a),
+                Err(e) => return error_json(&format!("Invalid mention account: {:?}", e)),
+            }
+        }
+
+        let calldata = match hex::decode(calldata_str) {
+            Ok(b) => b,
+            Err(e) => return error_json(&format!("Invalid calldata hex: {:?}", e)),
+        };
+
+        let ffi = unsafe { &*engine };
+        match ffi.runtime.block_on(
+            ffi.engine
+                .propose_contract_call(&sid, program, payer, mentions, calldata, desc_opt),
+        ) {
+            Ok(req_id) => {
+                let json = serde_json::json!({
+                    "ok": true,
+                    "request_id": req_id.0,
+                    "status": "pending_approval"
+                });
+                to_c_string(&json.to_string())
+            }
+            Err(e) => error_json(&format!("{:?}", e)),
+        }
+    })
+}
+
+/// List token holdings accessible to the session.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lez_wallet_list_token_holdings(
+    engine: *mut FfiSdkEngine,
+    session_id: *const c_char,
+) -> *mut c_char {
+    catch_ffi(error_json("FFI panic"), || {
+        if engine.is_null() {
+            return error_json("Null engine handle");
+        }
+        let sess_str = match unsafe { parse_c_str(session_id) } {
+            Ok(s) => s,
+            Err(e) => return error_json(e),
+        };
+        let sid = SessionId(sess_str.to_string());
+        let ffi = unsafe { &*engine };
+        match ffi.runtime.block_on(ffi.engine.list_token_holdings(&sid)) {
+            Ok(holdings) => {
+                let dtos: Vec<TokenHoldingDto> =
+                    holdings.iter().map(TokenHoldingDto::from).collect();
+                ok_json(&dtos)
+            }
+            Err(e) => error_json(&format!("{:?}", e)),
+        }
+    })
+}
+
+/// Privileged Owner API: List all tracked token holdings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lez_wallet_list_all_token_holdings(
+    engine: *mut FfiSdkEngine,
+) -> *mut c_char {
+    catch_ffi(error_json("FFI panic"), || {
+        if engine.is_null() {
+            return error_json("Null engine handle");
+        }
+        let ffi = unsafe { &*engine };
+        match ffi.runtime.block_on(ffi.engine.list_all_token_holdings()) {
+            Ok(holdings) => {
+                let dtos: Vec<TokenHoldingDto> =
+                    holdings.iter().map(TokenHoldingDto::from).collect();
+                ok_json(&dtos)
+            }
+            Err(e) => error_json(&format!("{:?}", e)),
+        }
+    })
+}
+
+/// Privileged Owner API: Register or update a tracked token holding.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lez_wallet_register_token_holding(
+    engine: *mut FfiSdkEngine,
+    holding_id: *const c_char,
+    definition_id: *const c_char,
+    symbol: *const c_char,
+    name: *const c_char,
+    is_shielded: bool,
+) -> *mut c_char {
+    catch_ffi(error_json("FFI panic"), || {
+        if engine.is_null() {
+            return error_json("Null engine handle");
+        }
+        let h_str = match unsafe { parse_c_str(holding_id) } {
+            Ok(s) => s,
+            Err(e) => return error_json(e),
+        };
+        let d_str = match unsafe { parse_c_str(definition_id) } {
+            Ok(s) => s,
+            Err(e) => return error_json(e),
+        };
+        let sym_str = match unsafe { parse_c_str(symbol) } {
+            Ok(s) => s,
+            Err(e) => return error_json(e),
+        };
+        let name_str = match unsafe { parse_c_str(name) } {
+            Ok(s) => s,
+            Err(e) => return error_json(e),
+        };
+
+        let hid = match AccountId::from_str(h_str) {
+            Ok(a) => a,
+            Err(e) => return error_json(&format!("Invalid holding_id: {:?}", e)),
+        };
+        let did = match AccountId::from_str(d_str) {
+            Ok(a) => a,
+            Err(e) => return error_json(&format!("Invalid definition_id: {:?}", e)),
+        };
+
+        let ffi = unsafe { &*engine };
+        match ffi.runtime.block_on(ffi.engine.register_token_holding(
+            hid,
+            did,
+            sym_str.to_string(),
+            name_str.to_string(),
+            is_shielded,
+        )) {
+            Ok(()) => ok_json(&serde_json::json!({ "registered": true })),
             Err(e) => error_json(&format!("{:?}", e)),
         }
     })

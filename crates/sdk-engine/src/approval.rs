@@ -59,6 +59,13 @@ impl ApprovalPrompt {
             RequestKind::GenericCall { description, .. } => description
                 .clone()
                 .unwrap_or_else(|| "Generic program call".to_string()),
+            RequestKind::ContractCall {
+                program_id,
+                description,
+                ..
+            } => description.clone().unwrap_or_else(|| {
+                format!("Contract call to {}", hex::encode(program_id.to_bytes()))
+            }),
         }
     }
 }
@@ -80,6 +87,24 @@ pub trait ApprovalHandler: Send + Sync {
     /// the engine treats the request as timed out.
     async fn request_approval(&self, prompt: ApprovalPrompt, timeout: Duration)
     -> ApprovalDecision;
+
+    /// Present an account selection prompt to let the user select which account(s)
+    /// to authorize for a connecting dApp.
+    ///
+    /// The default implementation selects the primary public account (or first available account).
+    async fn request_account_selection(
+        &self,
+        _dapp_identity: String,
+        available_accounts: Vec<crate::api::AccountView>,
+        _timeout: Duration,
+    ) -> Vec<lee::AccountId> {
+        available_accounts
+            .iter()
+            .find(|a| a.privacy == crate::api::AccountPrivacy::Public)
+            .or_else(|| available_accounts.first())
+            .map(|a| vec![a.account_id])
+            .unwrap_or_default()
+    }
 }
 
 /// CLI approval handler — interactive terminal prompt.
