@@ -634,7 +634,7 @@ fn test_lns_ffi_c_abi_safety() {
 }
 
 #[tokio::test]
-async fn test_phase1_engine_hardening() {
+async fn test_engine_transfers_and_holdings() {
     let env = TestEnv::new();
     let handler = Arc::new(MockApprovalHandler::new(ApprovalDecision::Approve));
     let engine =
@@ -720,7 +720,7 @@ async fn test_phase1_engine_hardening() {
 }
 
 #[test]
-fn test_phase1_ffi_hardening() {
+fn test_ffi_contract_calls_and_holdings() {
     let env = TestEnv::new();
     let ffi_data_dir = CString::new(env.data_dir.to_str().unwrap()).unwrap();
     let ffi_engine = unsafe { lez_wallet_engine_new(ffi_data_dir.as_ptr()) };

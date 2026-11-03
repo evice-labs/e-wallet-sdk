@@ -132,7 +132,7 @@ lez-wallet-sdk/
 - **zkVM Testimonial Smart Contract (`programs/testimonial-program`):** Embeds `SUBMISSION_ID` into submitter PDA records with strict invariant checks ($\le 280$ byte text, $\le 64$ byte moniker, submitter deduplication per submission ID).
 - **On-Chain Dispatcher Tool (`tools/dispatcher`, `lez-dispatcher`):** CLI tool for chunked program bytecode deployment via `ProgramLoader`, sending on-chain testimonial transactions, checking registry status, and dispatching raw instructions.
 - **Unified Deployment Registry (`deployments.json`):** Tracks deployed program header accounts across `standalone` (local) and `testnet` (public) environments, dynamically linked with `BuiltinVerifier` and `TestimonialDecoder`.
-- **Adoption Evidence Auditing (`crates/evidence-tool`):** Audits on-chain testimonial records against LP-0021 criteria (150 distinct submitters across required intervals).
+- **Adoption Evidence Auditing (`crates/evidence-tool`):** Audits on-chain testimonial records against verification criteria (150 distinct submitters across required intervals).
 - **Comprehensive Guide:** Complete build, deploy, and dispatch instructions documented in [`docs/program-deployment.md`](docs/program-deployment.md).
 
 #### 13. Native 4-Way Transfers & Smart Contract Dispatch (`api.rs`, `sdk-ffi`)

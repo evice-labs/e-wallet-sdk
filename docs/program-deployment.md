@@ -48,7 +48,7 @@ The Evice Wallet SDK includes native on-chain smart contract artifacts, a headle
    - Version-controlled JSON registry mapping active networks (`standalone` vs. `testnet`) to sequencer RPC endpoints and deployed program header account IDs.
    - Dynamically consumed by the SDK engine's [`BuiltinVerifier`](../crates/sdk-engine/src/verifier.rs) and [`TestimonialDecoder`](../crates/sdk-engine/src/decode/testimonial.rs).
 4. **`crates/evidence-tool`:**
-   - Audit utility scanning on-chain sequencer storage to verify the 150 distinct testimonial accounts required for milestone adoption evidence.
+   - Audit utility scanning on-chain sequencer storage to verify the 150 distinct testimonial accounts required for on-chain adoption evidence.
 
 ## 2. Testimonial Smart Contract Specification
 
@@ -204,7 +204,7 @@ cargo run -p lez-dispatcher -- raw \
 
 ## 6. Adoption Evidence Auditing (`evidence-tool`)
 
-The `evidence-tool` verifies the milestone adoption criteria by querying on-chain testimonial records attributed to `SUBMISSION_ID`:
+The `evidence-tool` verifies the on-chain adoption criteria by querying on-chain testimonial records attributed to `SUBMISSION_ID`:
 
 ```bash
 just audit-evidence
