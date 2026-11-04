@@ -143,11 +143,17 @@ lez-wallet-sdk/
 - **Account Selection & Consent:** Resolves connecting dApp account selection prompts via `ApprovalHandler::request_account_selection`, granting `GrantKind::Read` and `GrantKind::Propose` to authorized accounts while filtering internal identity accounts from account listings.
 - **Logos DAO Governance Reference Mini-App:** Demonstrates end-to-end integration of Wallet Provider SDK and Identity Accountability (Domain 6) for anonymous, Sybil-resistant voting via scoped nullifiers and BIP-340 Schnorr ballot attestations.
 
+#### 14. Resilient Sequencer Client & Universal Account Resolution (`client.rs`, `api.rs`, `sdk-ffi`)
+- **Resilient Sequencer Adapter (`TestnetSequencerClient`):** Wraps `SequencerClient` from `sequencer_service_rpc` to implement `WalletSequencerClient`. Dynamically normalizes live testnet RPC payloads (`shards` to `actor_states`) and proof queries, ensuring seamless RPC compatibility without modifying upstream LEZ crates.
+- **Strict Git Commit Pinning:** Locks all upstream LEZ dependencies in `Cargo.toml` to explicit commit hash `5562eeeb200d67c51ba58976ba7b0bb63c19a142` without local path overrides, guaranteeing clean reproducible upstream compatibility.
+- **Universal Account Identifier Resolution (`resolve_account` / `lez_wallet_resolve_account`):** Unified resolution accepting raw Base58, prefixed `Public/...`, `Private/...`, or `*.lez` domain names, returning canonical address, privacy type, label, and local keystore ownership.
+- **Shielded + Public Balance Aggregation:** Aggregates zero-knowledge circuit shielded pool and public pool balances for private accounts with formatted thousand-separator presentation.
+
 ## Quick Start
 
 ### Prerequisites
 - **Rust Toolchain:** Pinned to Rust 1.98.1+ via `rust-toolchain.toml`.
-- **LEZ Monorepo:** Pinned directly via Cargo Git dependencies tracking `https://github.com/logos-blockchain/logos-execution-zone` (`dev` branch), making the SDK completely standalone without requiring local sibling checkouts.
+- **LEZ Monorepo:** Pinned directly via Cargo Git dependencies tracking `https://github.com/logos-blockchain/logos-execution-zone` (commit `5562eee`), making the SDK completely standalone without requiring local sibling checkouts.
 
 ### Building & Checking
 Commands can be run via the [`Justfile`](Justfile) task runner or directly with `cargo`:

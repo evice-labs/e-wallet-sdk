@@ -129,6 +129,9 @@ Returns accounts authorized for the given session.
 Fetches the balance of an authorized account in native atomic units.
 - **FFI Signature:** `lez_wallet_get_balance(engine: *mut FfiSdkEngine, session_id: *const c_char, account_id: *const c_char) -> *mut c_char`
 - **Privilege Required:** `GrantKind::Read`.
+- **Factual Aggregation Semantics:**
+  - For **Transparent/Public** accounts: Queries live sequencer account state and returns on-chain native balance.
+  - For **Private/Shielded** accounts: Factual unified balance combining both zero-knowledge circuit private pool (`shielded`) and transparent pool balance (`public_bal`) if funds were received at the account's transparent address (`shielded + public_bal`).
 - **Response Format:**
 ```json
 {
@@ -275,6 +278,26 @@ Client-side primitives for accountable pseudonymity:
 - **`derive_scoped_nullifier`:** Computes cross-dApp unlinkable nullifier `SHA-256("lez/identity/v1/scoped_nullifier" || secret || scope_id)`.
 - **`sign_identity_attestation`:** Produces a 64-byte BIP-340 Schnorr signature over custom payloads.
 - **`prepare_identity_registration`:** Prepares Two-Tier Shamir Secret Sharing (SSS) threshold encrypted recovery shares over GF(2^8).
+
+### 3.11 `resolve_account`
+Resolves an arbitrary account identifier string into structured metadata:
+- **FFI Signature:** `lez_wallet_resolve_account(engine: *mut FfiSdkEngine, input: *const c_char) -> *mut c_char`
+- **Supported Formats:**
+  1. **LNS Domain Names:** `*.lez` (e.g. `"alice.lez"`) via live on-chain name resolution.
+  2. **Prefixed Public Addresses:** `"Public/<base58_address>"` or `"public/<base58_address>"`.
+  3. **Prefixed Private Addresses:** `"Private/<base58_address>"` or `"private/<base58_address>"`.
+  4. **Raw Base58 Addresses:** Identifies local keystore privacy type or defaults to transparent public.
+- **Response Format:**
+```json
+{
+  "ok": true,
+  "account_id": "44KVvzvh2ephQU9aR5snboGUXKgS1FnPYh1W4KZKwmhm",
+  "privacy": "public",
+  "canonical_address": "Public/44KVvzvh2ephQU9aR5snboGUXKgS1FnPYh1W4KZKwmhm",
+  "label": "alice.lez",
+  "is_local": false
+}
+```
 
 ## 4. `OwnerApi` Reference Specification
 

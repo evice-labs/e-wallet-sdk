@@ -462,6 +462,19 @@ To fulfill on-chain adoption verification, verifiable attribution, and automated
 4. **Adoption Evidence Auditing (`crates/evidence-tool`):**
    - Command-line audit utility scanning on-chain sequencer state, querying testimonial records matching `SUBMISSION_ID`, and verifying distinct submitter accounts and temporal dispersion criteria.
 
+### 4.14 Resilient Sequencer Client & RPC Compatibility (`client.rs`)
+
+To ensure seamless, resilient interoperation between modern SDK engine traits and live LEZ testnet sequencer deployment revisions without requiring fork modifications to the upstream `logos-execution-zone` codebase, `sdk-engine` implements `TestnetSequencerClient`.
+
+1. **Idiomatic Extension via `WalletSequencerClient`:**
+   - Wraps `sequencer_service_rpc::SequencerClient` and implements `wallet::WalletSequencerClient`.
+   - `WalletCore` is generic over `C: WalletSequencerClient`, allowing `SdkEngine` to inject this adaptor via `WalletCore::new_update_chain_with_client` and `WalletCore::new_init_storage_with_client`.
+2. **Backward-Compatible RPC Payloads:**
+   - **Account Serialization (`shards` vs `actor_states`):** Sequencer testnets returning account payloads with the `shards` field are normalized dynamically to `actor_states` at the JSON level before passing to `Account` deserialization, avoiding `unknown field 'shards', expected 'actor_states'` deserialization rejections.
+   - **Proof Query Tuple Compatibility (`getProofsAndRoot`):** Adapts both legacy 2-tuple `(proofs, root)` and 3-tuple `(proofs, message_paths, root)` return signatures from sequencer RPC calls into canonical proof structures.
+3. **Pure Upstream Commit Pinning:**
+   - All external LEZ dependencies in `Cargo.toml` are pinned to explicit Git commits (`rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142"`) with zero local directory patches or workspace overrides.
+
 ## 5. Security & Privacy Model
 
 ### 5.1 Threat Mitigations
