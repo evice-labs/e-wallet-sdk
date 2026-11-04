@@ -9,15 +9,16 @@
 
 use bip39::Mnemonic;
 use lee::AccountId;
-use sequencer_service_rpc::SequencerClient;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use wallet::WalletCore;
 use wallet::account::{AccountIdWithPrivacy, Label};
+use wallet::config::WalletConfig;
 
 use crate::approval::{ApprovalDecision, ApprovalHandler, ApprovalPrompt};
+use crate::client::TestnetSequencerClient;
 use crate::decode::DecoderRegistry;
 use crate::effects::EffectSimulator;
 use crate::error::{SdkError, SdkResult};
@@ -74,10 +75,21 @@ pub struct AccountView {
     pub balance: Option<u128>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AccountPrivacy {
+    #[serde(rename = "public")]
     Public,
+    #[serde(rename = "private")]
     Private,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ResolvedAccountInfo {
+    pub account_id: AccountId,
+    pub privacy: AccountPrivacy,
+    pub canonical_address: String,
+    pub label: Option<String>,
+    pub is_local: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -91,7 +103,7 @@ pub struct TokenHoldingView {
 
 /// The central SDK engine.
 pub struct SdkEngine {
-    wallet: Arc<Mutex<WalletCore<SequencerClient>>>,
+    wallet: Arc<Mutex<WalletCore<TestnetSequencerClient>>>,
     sessions: SessionStore,
     requests: RequestStore,
     tx_queue: TxQueue,
@@ -306,7 +318,7 @@ pub trait OwnerApi {
 
 impl SdkEngine {
     pub fn new(
-        wallet: WalletCore<SequencerClient>,
+        wallet: WalletCore<TestnetSequencerClient>,
         approval_handler: Arc<dyn ApprovalHandler>,
         config: SdkConfig,
     ) -> SdkResult<Self> {
@@ -399,20 +411,29 @@ impl SdkEngine {
         if !data_dir.exists() {
             std::fs::create_dir_all(&data_dir).map_err(|e| SdkError::Internal(e.into()))?;
         }
+        let wallet_config =
+            WalletConfig::from_path_or_initialize_default(&config.wallet_config_path)
+                .map_err(SdkError::Internal)?;
+        let inner_client =
+            WalletCore::client_from_config(&wallet_config).map_err(SdkError::Internal)?;
+        let client = TestnetSequencerClient::new(inner_client);
+
         let wallet = if config.wallet_storage_path.exists() {
-            WalletCore::new_update_chain(
+            WalletCore::new_update_chain_with_client(
                 config.wallet_config_path.clone(),
                 config.wallet_storage_path.clone(),
                 None,
                 password,
+                client,
             )
             .map_err(SdkError::Internal)?
         } else {
-            let (wallet, _mnemonic) = WalletCore::new_init_storage(
+            let (wallet, _mnemonic) = WalletCore::new_init_storage_with_client(
                 config.wallet_config_path.clone(),
                 config.wallet_storage_path.clone(),
                 None,
                 password,
+                client,
             )
             .map_err(SdkError::Internal)?;
             wallet
@@ -462,6 +483,119 @@ impl SdkEngine {
         Ok(())
     }
 
+    pub async fn resolve_account(&self, input: &str) -> SdkResult<ResolvedAccountInfo> {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return Err(SdkError::InvalidArgument("Empty account address".into()));
+        }
+
+        // 1. Check LNS domain name
+        if trimmed.ends_with(".lez") {
+            let dest = self
+                .resolver
+                .resolve(trimmed)
+                .await
+                .map_err(|e| SdkError::NameResolutionError(e.to_string()))?
+                .ok_or_else(|| {
+                    SdkError::InvalidArgument(format!("Name '{}' not found", trimmed))
+                })?;
+            let account_id = dest.account.ok_or_else(|| {
+                SdkError::InvalidArgument(format!("Name '{}' has no account record", trimmed))
+            })?;
+            return Ok(ResolvedAccountInfo {
+                account_id,
+                privacy: AccountPrivacy::Public,
+                canonical_address: format!("Public/{}", account_id),
+                label: Some(trimmed.to_string()),
+                is_local: false,
+            });
+        }
+
+        // 2. Check explicit prefix
+        let (raw_str, explicit_privacy) = if let Some(stripped) = trimmed
+            .strip_prefix("Public/")
+            .or_else(|| trimmed.strip_prefix("public/"))
+        {
+            (stripped, Some(AccountPrivacy::Public))
+        } else if let Some(stripped) = trimmed
+            .strip_prefix("Private/")
+            .or_else(|| trimmed.strip_prefix("private/"))
+        {
+            (stripped, Some(AccountPrivacy::Private))
+        } else {
+            (trimmed, None)
+        };
+
+        let account_id = raw_str.parse::<AccountId>().map_err(|e| {
+            SdkError::InvalidArgument(format!("Invalid account id '{}': {}", trimmed, e))
+        })?;
+
+        let wallet = self.wallet.lock().await;
+        let store = self.store.lock().await;
+        let custom_labels = &store.state().account_labels;
+
+        let is_private_local = wallet
+            .storage()
+            .key_chain()
+            .private_account(account_id)
+            .is_some()
+            || wallet
+                .storage()
+                .key_chain()
+                .shared_private_account(account_id)
+                .is_some();
+        let is_public_local = wallet
+            .storage()
+            .key_chain()
+            .pub_account_signing_key(account_id)
+            .is_some();
+
+        let privacy = if let Some(p) = explicit_privacy {
+            p
+        } else if is_private_local {
+            AccountPrivacy::Private
+        } else if is_public_local {
+            AccountPrivacy::Public
+        } else {
+            // Check if account has public representation on-chain
+            if let Ok(Some(_)) = wallet.get_account_public(account_id).await {
+                AccountPrivacy::Public
+            } else {
+                AccountPrivacy::Public
+            }
+        };
+
+        let is_local = is_private_local || is_public_local;
+        let prefix = match privacy {
+            AccountPrivacy::Public => "Public",
+            AccountPrivacy::Private => "Private",
+        };
+        let canonical_address = format!("{}/{}", prefix, account_id);
+
+        let label = custom_labels
+            .get(&account_id.to_string())
+            .cloned()
+            .or_else(|| {
+                let target_privacy = match privacy {
+                    AccountPrivacy::Public => AccountIdWithPrivacy::Public(account_id),
+                    AccountPrivacy::Private => AccountIdWithPrivacy::Private(account_id),
+                };
+                wallet
+                    .storage()
+                    .labels_for_account(target_privacy)
+                    .next()
+                    .map(|l| l.as_ref().to_string())
+            });
+
+        Ok(ResolvedAccountInfo {
+            account_id,
+            privacy,
+            canonical_address,
+            label,
+            is_local,
+        })
+    }
+
     pub fn sessions(&self) -> &SessionStore {
         &self.sessions
     }
@@ -474,7 +608,7 @@ impl SdkEngine {
         &self.approval_handler
     }
 
-    pub fn wallet(&self) -> &Arc<Mutex<WalletCore<SequencerClient>>> {
+    pub fn wallet(&self) -> &Arc<Mutex<WalletCore<TestnetSequencerClient>>> {
         &self.wallet
     }
 
@@ -572,10 +706,29 @@ impl DAppApi for SdkEngine {
         self.require_grant(session_id, account, GrantKind::Read)
             .await?;
         let wallet = self.wallet.lock().await;
-        wallet
-            .get_account_balance(*account)
-            .await
-            .map_err(SdkError::Internal)
+        if wallet
+            .storage()
+            .key_chain()
+            .private_account(*account)
+            .is_some()
+            || wallet
+                .storage()
+                .key_chain()
+                .shared_private_account(*account)
+                .is_some()
+        {
+            let shielded = wallet
+                .private_account_state(*account)
+                .and_then(|acc| acc.data.native_balance().ok())
+                .unwrap_or(0);
+            let public_bal = wallet.get_account_balance(*account).await.unwrap_or(0);
+            Ok(shielded + public_bal)
+        } else {
+            wallet
+                .get_account_balance(*account)
+                .await
+                .map_err(SdkError::Internal)
+        }
     }
 
     async fn propose_native_transfer(
@@ -1326,9 +1479,20 @@ impl OwnerApi for SdkEngine {
         let config_path = self.config.wallet_config_path.clone();
         let storage_path = self.config.wallet_storage_path.clone();
 
-        let (new_wallet, mnemonic) =
-            WalletCore::new_init_storage(config_path, storage_path, None, password)
-                .map_err(SdkError::Internal)?;
+        let wallet_config = WalletConfig::from_path_or_initialize_default(&config_path)
+            .map_err(SdkError::Internal)?;
+        let inner_client =
+            WalletCore::client_from_config(&wallet_config).map_err(SdkError::Internal)?;
+        let client = TestnetSequencerClient::new(inner_client);
+
+        let (new_wallet, mnemonic) = WalletCore::new_init_storage_with_client(
+            config_path,
+            storage_path,
+            None,
+            password,
+            client,
+        )
+        .map_err(SdkError::Internal)?;
 
         let mut wallet = self.wallet.lock().await;
         *wallet = new_wallet;
@@ -1503,11 +1667,17 @@ impl OwnerApi for SdkEngine {
                         .next()
                         .map(|l| l.as_ref().to_string())
                 });
+            let shielded_bal = wallet
+                .private_account_state(account_id)
+                .and_then(|acc| acc.data.native_balance().ok())
+                .unwrap_or(0);
+            let public_bal = wallet.get_account_balance(account_id).await.unwrap_or(0);
+            let total_bal = shielded_bal + public_bal;
             views.push(AccountView {
                 account_id,
                 privacy: AccountPrivacy::Private,
                 label: label_text,
-                balance: None,
+                balance: Some(total_bal),
             });
         }
 
@@ -1581,7 +1751,14 @@ impl OwnerApi for SdkEngine {
 }
 
 fn parse_account_id(input: &str) -> SdkResult<AccountId> {
-    input
+    let trimmed = input.trim();
+    let clean = trimmed
+        .strip_prefix("Public/")
+        .or_else(|| trimmed.strip_prefix("public/"))
+        .or_else(|| trimmed.strip_prefix("Private/"))
+        .or_else(|| trimmed.strip_prefix("private/"))
+        .unwrap_or(trimmed);
+    clean
         .parse::<AccountId>()
         .map_err(|e| SdkError::InvalidArgument(format!("invalid account id '{}': {}", input, e)))
 }

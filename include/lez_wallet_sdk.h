@@ -267,6 +267,12 @@ char *lez_wallet_resolve_name(struct FfiSdkEngine *engine,
                               const char *name);
 
 /**
+ * Resolve an account identifier (raw Base58, prefixed Public/..., prefixed Private/..., or *.lez name).
+ * Identifies privacy type, canonical address format, and user label.
+ */
+char *lez_wallet_resolve_account(struct FfiSdkEngine *engine, const char *input);
+
+/**
  * Request identity permission grants (`IdentityRead` or `IdentityPropose`).
  */
 char *lez_wallet_request_identity_access(struct FfiSdkEngine *engine,
