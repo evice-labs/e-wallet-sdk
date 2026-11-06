@@ -625,8 +625,8 @@ pub async fn main() -> Result<()> {
             // Verify account privacy if sender is in local wallet
             if let Ok(accounts) = engine.list_all_accounts().await
                 && let Some(matching) = accounts.iter().find(|a| a.account_id == from_id)
-                && let Some(expected) = req_from_privacy
-                && matching.privacy != expected
+                && let Some(ref expected) = req_from_privacy
+                && matching.privacy != *expected
             {
                 bail!(
                     "Account '{}' is {:?}, but transfer direction '{}' requires {:?}",
@@ -648,7 +648,13 @@ pub async fn main() -> Result<()> {
 
             println!("Proposing transfer ({dir_name})...");
             let req_id = engine
-                .propose_native_transfer(&session_id, from_id, to_str.clone(), amount)
+                .propose_native_transfer(
+                    &session_id,
+                    from_id,
+                    to_str.clone(),
+                    amount,
+                    req_from_privacy,
+                )
                 .await
                 .map_err(|e| anyhow::anyhow!("Transfer proposal error: {:?}", e))?;
 
