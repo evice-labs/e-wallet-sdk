@@ -475,6 +475,19 @@ To ensure seamless, resilient interoperation between modern SDK engine traits an
 3. **Pure Upstream Commit Pinning:**
    - All external LEZ dependencies in `Cargo.toml` are pinned to explicit Git commits (`rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142"`) with zero local directory patches or workspace overrides.
 
+### 4.15 Protocol State Separation & Invariant Guardrails (`docs/protocol-compatibility-and-invariants.md`)
+
+To ensure safe operation across different LEZ network iterations and protect user funds from irreversible protocol-level traps:
+1. **Cryptographic Identity Asymmetry:**
+   - Public accounts are derived from ECDSA/Schnorr public keys and authenticate via cryptographic signatures.
+   - Private accounts are derived from post-quantum ML-KEM-768 viewing keys and BabyJubjub/Poseidon nullifier keys, authenticated exclusively through Zero-Knowledge SNARK proofs.
+   - Private accounts possess no ECDSA signing keys, rendering any transparent balance on their public shard permanently unspendable and unshieldable (*Asymmetric Deposit Trap*).
+2. **Shielding & Private Proof Execution:**
+   - Public-to-private shielding and private note transfers are fully supported on LEZ Testnet v0.3. Upstream commit `4ba9f988` (October 14, 2026) refactored private witness execution, resolving earlier `WitnessNotInRoot` client artifacts and enabling native shielded transfers across updated toolchains.
+3. **Downstream Safety Guardrails:**
+   - The SDK Engine and consumer modules implement pre-flight validation guards to prevent users from executing invalid self-shielding or unspendable transparent deposits to private accounts on v0.3 networks.
+   - For complete formal analysis, refer to [protocol-compatibility-and-invariants.md](protocol-compatibility-and-invariants.md).
+
 ## 5. Security & Privacy Model
 
 ### 5.1 Threat Mitigations
@@ -495,6 +508,7 @@ To ensure seamless, resilient interoperation between modern SDK engine traits an
 | **Passphrase Rotation Vulnerability** | Validates current password against on-disk keystore before re-encrypting with new credentials; prevents unauthorized passphrase resets. | `api.rs` (`change_password`) |
 | **Unregistered LNS Handle Fund Loss** | Pre-flight destination resolution verifies LNS records exist on-chain and hold valid public receiving keys before transaction creation; rejects unresolvable domains immediately. | `api.rs`, `resolve/lns.rs` |
 | **Tampered / Forged LNS Profiles** | Authenticated AES-256-GCM tag verification bound to associated data `logos-names/v5/record`, followed by strict `profile.name == input_name` consistency checking. | `resolve/lns.rs` |
+| **Asymmetric Deposit Trap (Private Shard Asset Lock)** | Pre-flight transaction validation rejects transparent self-shielding attempts from private accounts; prevents permanent asset lockups on transparent shards. | `v03_compat.rs`, `api.rs`, `docs/protocol-compatibility-and-invariants.md` |
 
 ### 5.2 Privacy Guarantees
 
