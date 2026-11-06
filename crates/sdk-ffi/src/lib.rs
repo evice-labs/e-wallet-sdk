@@ -530,6 +530,36 @@ pub unsafe extern "C" fn lez_wallet_set_approval_callback(
     })
 }
 
+/// Get the current gas limit seed configured for transactions.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lez_wallet_get_gas_limit(engine: *mut FfiSdkEngine) -> u64 {
+    catch_ffi(sdk_engine::api::DEFAULT_WALLET_GAS_LIMIT, || {
+        if engine.is_null() {
+            return sdk_engine::api::DEFAULT_WALLET_GAS_LIMIT;
+        }
+        let ffi = unsafe { &*engine };
+        ffi.runtime.block_on(ffi.engine.get_gas_limit())
+    })
+}
+
+/// Set the gas limit seed for transactions.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lez_wallet_set_gas_limit(
+    engine: *mut FfiSdkEngine,
+    limit: u64,
+) -> *mut c_char {
+    catch_ffi(error_json("FFI panic"), || {
+        if engine.is_null() {
+            return error_json("Null engine handle");
+        }
+        let ffi = unsafe { &*engine };
+        match ffi.runtime.block_on(ffi.engine.set_gas_limit(limit)) {
+            Ok(()) => success_json(),
+            Err(e) => error_json(&format!("{:?}", e)),
+        }
+    })
+}
+
 /// Submit an approval decision (`1` for Approve, `0` for Reject) for a pending request.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn lez_wallet_submit_approval_decision(
@@ -1109,7 +1139,14 @@ pub unsafe extern "C" fn lez_wallet_propose_native_transfer(
         };
 
         let sid = SessionId(sess_str.to_string());
-        let from = match AccountId::from_str(from_str) {
+        let clean_from = from_str
+            .trim()
+            .strip_prefix("Public/")
+            .or_else(|| from_str.trim().strip_prefix("public/"))
+            .or_else(|| from_str.trim().strip_prefix("Private/"))
+            .or_else(|| from_str.trim().strip_prefix("private/"))
+            .unwrap_or(from_str.trim());
+        let from = match AccountId::from_str(clean_from) {
             Ok(a) => a,
             Err(e) => return error_json(&format!("Invalid from account ID: {:?}", e)),
         };
@@ -1118,12 +1155,22 @@ pub unsafe extern "C" fn lez_wallet_propose_native_transfer(
             Err(e) => return error_json(&format!("Invalid amount integer: {:?}", e)),
         };
 
+        let from_lower = from_str.trim().to_lowercase();
+        let from_privacy = if from_lower.starts_with("public/") {
+            Some(sdk_engine::api::AccountPrivacy::Public)
+        } else if from_lower.starts_with("private/") {
+            Some(sdk_engine::api::AccountPrivacy::Private)
+        } else {
+            None
+        };
+
         let ffi = unsafe { &*engine };
         match ffi.runtime.block_on(ffi.engine.propose_native_transfer(
             &sid,
             from,
             to_str.to_string(),
             amount,
+            from_privacy,
         )) {
             Ok(req_id) => {
                 let json = serde_json::json!({

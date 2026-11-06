@@ -74,6 +74,16 @@ char *lez_wallet_set_approval_callback(struct FfiSdkEngine *engine,
                                        void *user_data);
 
 /**
+ * Get the current gas limit seed configured for transactions.
+ */
+uint64_t lez_wallet_get_gas_limit(struct FfiSdkEngine *engine);
+
+/**
+ * Set the gas limit seed for transactions.
+ */
+char *lez_wallet_set_gas_limit(struct FfiSdkEngine *engine, uint64_t limit);
+
+/**
  * Submit an approval decision (`1` for Approve, `0` for Reject) for a pending request.
  */
 char *lez_wallet_submit_approval_decision(struct FfiSdkEngine *engine,
@@ -104,11 +114,11 @@ char *lez_wallet_lock(struct FfiSdkEngine *engine);
 char *lez_wallet_unlock(struct FfiSdkEngine *engine, const char *password);
 
 /**
- * Change wallet encryption password.
+ * Change the wallet encryption password.
  */
 char *lez_wallet_change_password(struct FfiSdkEngine *engine,
-                                const char *old_password,
-                                const char *new_password);
+                                 const char *old_password,
+                                 const char *new_password);
 
 /**
  * Create a new public account with an optional label.
@@ -231,8 +241,7 @@ char *lez_wallet_propose_contract_call(struct FfiSdkEngine *engine,
 /**
  * List token holdings accessible to the session.
  */
-char *lez_wallet_list_token_holdings(struct FfiSdkEngine *engine,
-                                     const char *session_id);
+char *lez_wallet_list_token_holdings(struct FfiSdkEngine *engine, const char *session_id);
 
 /**
  * Privileged Owner API: List all tracked token holdings.
@@ -270,7 +279,8 @@ char *lez_wallet_resolve_name(struct FfiSdkEngine *engine,
  * Resolve an account identifier (raw Base58, prefixed Public/..., prefixed Private/..., or *.lez name).
  * Identifies privacy type, canonical address format, and user label.
  */
-char *lez_wallet_resolve_account(struct FfiSdkEngine *engine, const char *input);
+char *lez_wallet_resolve_account(struct FfiSdkEngine *engine,
+                                 const char *input);
 
 /**
  * Request identity permission grants (`IdentityRead` or `IdentityPropose`).
