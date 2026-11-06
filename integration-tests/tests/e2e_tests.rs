@@ -142,7 +142,7 @@ async fn test_dapp_session_and_granular_grants() {
 
     // Transfer proposal without Propose grant must fail
     let prop_err = engine
-        .propose_native_transfer(&session_id, alice, bob.to_string(), 500)
+        .propose_native_transfer(&session_id, alice, bob.to_string(), 500, None)
         .await;
     assert!(prop_err.is_err());
 
@@ -161,7 +161,7 @@ async fn test_dapp_session_and_granular_grants() {
 
     // But transfer proposal still fails (needs Propose grant)
     let prop_err2 = engine
-        .propose_native_transfer(&session_id, alice, bob.to_string(), 500)
+        .propose_native_transfer(&session_id, alice, bob.to_string(), 500, None)
         .await;
     assert!(prop_err2.is_err());
 
@@ -173,7 +173,7 @@ async fn test_dapp_session_and_granular_grants() {
 
     // Propose transfer now succeeds, producing RequestId
     let request_id = engine
-        .propose_native_transfer(&session_id, alice, bob.to_string(), 500)
+        .propose_native_transfer(&session_id, alice, bob.to_string(), 500, None)
         .await
         .expect("failed to propose transfer with propose grant");
 
@@ -484,7 +484,7 @@ async fn test_security_flaws_and_access_control() {
         .expect("grant propose");
 
     let req_id = engine
-        .propose_native_transfer(&session_id, alice, bob.to_string(), 250)
+        .propose_native_transfer(&session_id, alice, bob.to_string(), 250, None)
         .await
         .expect("propose native transfer");
 
@@ -585,6 +585,7 @@ async fn test_lns_name_resolution_and_ffi_safety() {
             alice,
             "definitely-unregistered-xyz999.lez".to_string(),
             100,
+            None,
         )
         .await;
     assert!(
@@ -661,13 +662,13 @@ async fn test_engine_transfers_and_holdings() {
 
     // 1. Guard clause: zero amount must fail
     let err_zero = engine
-        .propose_native_transfer(&session_id, alice, bob.to_string(), 0)
+        .propose_native_transfer(&session_id, alice, bob.to_string(), 0, None)
         .await;
     assert!(err_zero.is_err(), "Zero transfer must fail");
 
     // 2. Guard clause: self-transfer with same privacy must fail
     let err_self = engine
-        .propose_native_transfer(&session_id, alice, alice.to_string(), 100)
+        .propose_native_transfer(&session_id, alice, alice.to_string(), 100, None)
         .await;
     assert!(err_self.is_err(), "Self-transfer must fail");
 
