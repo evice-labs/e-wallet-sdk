@@ -212,6 +212,7 @@ pub fn build_and_sign_v03_native_transfer(
 }
 
 /// Assembles, hashes, signs, and Base64-encodes a generic smart contract invocation for LEZ v0.3.
+#[allow(clippy::too_many_arguments)]
 pub fn build_and_sign_v03_contract_call(
     program_id: AccountId,
     payer_id: AccountId,

@@ -60,7 +60,7 @@ impl TestnetSequencerClient {
             Ok(Some(v)) => {
                 if v.get("data")
                     .and_then(|d| d.as_object())
-                    .map_or(false, |o| o.contains_key("shards"))
+                    .is_some_and(|o| o.contains_key("shards"))
                 {
                     SequencerProtocolVersion::V03ShardModel
                 } else {
