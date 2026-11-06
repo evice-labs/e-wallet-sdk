@@ -1,7 +1,27 @@
 use super::{DecodedInstruction, ProgramDecoder};
+use borsh::{BorshDeserialize, BorshSerialize};
 use lee::AccountId;
 use std::str::FromStr;
-use testimonial_program::TestimonialInstruction;
+
+/// Testimonial instruction payload schema for Logos Execution Zone.
+#[derive(Clone, Debug, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
+pub enum TestimonialInstruction {
+    SubmitTestimonial {
+        submission_id: [u8; 32],
+        text: String,
+        username: Option<String>,
+    },
+}
+
+impl TestimonialInstruction {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, std::io::Error> {
+        borsh::from_slice(bytes)
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>, std::io::Error> {
+        borsh::to_vec(self)
+    }
+}
 
 /// Decoder for testimonial program calldata.
 pub struct TestimonialDecoder {

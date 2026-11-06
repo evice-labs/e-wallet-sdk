@@ -18,19 +18,19 @@ repository = "https://github.com/evice-labs/lez-wallet-sdk"
 
 [workspace.dependencies]
 # LEZ monorepo crates
-wallet                = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "wallet" }
-lee                   = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "lee" }
-lee_core              = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "lee_core" }
-common                = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "common" }
-key_protocol          = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "key_protocol" }
-sequencer_service_rpc = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "sequencer_service_rpc", features = ["client"] }
-testnet_initial_state = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "testnet_initial_state" }
-bridge_core           = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "bridge_core" }
-keycard_wallet        = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "keycard_wallet" }
-programs              = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "programs", default-features = false }
-system_accounts       = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "system_accounts" }
-sequencer_stake_core  = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "sequencer_stake_core" }
-program_loader_core   = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", branch = "dev", package = "program_loader_core" }
+wallet                = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142", package = "wallet" }
+lee                   = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142", package = "lee" }
+lee_core              = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142", package = "lee_core" }
+common                = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142", package = "common" }
+key_protocol          = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142", package = "key_protocol" }
+sequencer_service_rpc = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142", package = "sequencer_service_rpc", features = ["client"] }
+testnet_initial_state = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142", package = "testnet_initial_state" }
+bridge_core           = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142", package = "bridge_core" }
+keycard_wallet        = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142", package = "keycard_wallet" }
+programs              = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142", package = "programs", default-features = false }
+system_accounts       = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142", package = "system_accounts" }
+sequencer_stake_core  = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142", package = "sequencer_stake_core" }
+program_loader_core   = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142", package = "program_loader_core" }
 
 # SDK internal crates
 sdk-engine          = { path = "crates/sdk-engine" }
@@ -40,6 +40,7 @@ testimonial-program = { path = "programs/testimonial-program" }
 # Third-party crates
 anyhow          = "1.0.98"
 async-trait     = "0.1"
+base64          = "0.22"
 bip39           = "2.2.0"
 borsh           = "1.5.7"
 chrono          = { version = "0.4", features = ["serde"] }
@@ -50,6 +51,7 @@ env_logger      = "0.11"
 futures         = "0.3"
 hex             = "0.4.3"
 itertools       = "0.14.0"
+jsonrpsee       = { version = "0.26.0", features = ["client"] }
 log             = "0.4"
 rand            = { version = "0.8.5", features = ["std", "std_rng", "getrandom"] }
 risc0-binfmt    = "3.0.2"

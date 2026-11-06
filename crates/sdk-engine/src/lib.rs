@@ -5,6 +5,7 @@
 
 pub mod api;
 pub mod approval;
+pub mod client;
 pub mod decode;
 pub mod effects;
 pub mod error;
@@ -14,6 +15,7 @@ pub mod request;
 pub mod resolve;
 pub mod session;
 pub mod store;
+pub mod v03_compat;
 pub mod verifier;
 
 // Re-export core types that consumers use constantly.

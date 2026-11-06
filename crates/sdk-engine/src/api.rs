@@ -9,15 +9,16 @@
 
 use bip39::Mnemonic;
 use lee::AccountId;
-use sequencer_service_rpc::SequencerClient;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use wallet::WalletCore;
 use wallet::account::{AccountIdWithPrivacy, Label};
+use wallet::config::WalletConfig;
+use wallet::{WalletCore, WalletSequencerClient};
 
 use crate::approval::{ApprovalDecision, ApprovalHandler, ApprovalPrompt};
+use crate::client::{SequencerProtocolVersion, TestnetSequencerClient};
 use crate::decode::DecoderRegistry;
 use crate::effects::EffectSimulator;
 use crate::error::{SdkError, SdkResult};
@@ -27,10 +28,15 @@ use crate::resolve::NameResolver;
 use crate::resolve::lns::{LnsConfig, LnsResolver};
 use crate::session::{GrantKind, SessionId, SessionStore};
 use crate::store::PersistentStore;
+use crate::v03_compat;
 use crate::verifier::{BuiltinVerifier, ProgramVerifier};
 
 const DEFAULT_SESSION_TTL: Duration = Duration::from_secs(24 * 3600);
 const DEFAULT_APPROVAL_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Canonical default gas limit for standard transactions in LEZ wallet SDK.
+/// Aligns with standard LEZ execution limits for native and token transfers.
+pub const DEFAULT_WALLET_GAS_LIMIT: u64 = 34_000;
 
 #[derive(Debug, Clone)]
 pub struct SdkConfig {
@@ -74,10 +80,21 @@ pub struct AccountView {
     pub balance: Option<u128>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AccountPrivacy {
+    #[serde(rename = "public")]
     Public,
+    #[serde(rename = "private")]
     Private,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ResolvedAccountInfo {
+    pub account_id: AccountId,
+    pub privacy: AccountPrivacy,
+    pub canonical_address: String,
+    pub label: Option<String>,
+    pub is_local: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -91,7 +108,7 @@ pub struct TokenHoldingView {
 
 /// The central SDK engine.
 pub struct SdkEngine {
-    wallet: Arc<Mutex<WalletCore<SequencerClient>>>,
+    wallet: Arc<Mutex<WalletCore<TestnetSequencerClient>>>,
     sessions: SessionStore,
     requests: RequestStore,
     tx_queue: TxQueue,
@@ -141,6 +158,7 @@ pub trait DAppApi {
         from: AccountId,
         to: String,
         amount: u128,
+        from_privacy: Option<AccountPrivacy>,
     ) -> impl std::future::Future<Output = SdkResult<RequestId>> + Send;
 
     fn propose_token_transfer(
@@ -306,7 +324,7 @@ pub trait OwnerApi {
 
 impl SdkEngine {
     pub fn new(
-        wallet: WalletCore<SequencerClient>,
+        wallet: WalletCore<TestnetSequencerClient>,
         approval_handler: Arc<dyn ApprovalHandler>,
         config: SdkConfig,
     ) -> SdkResult<Self> {
@@ -399,26 +417,77 @@ impl SdkEngine {
         if !data_dir.exists() {
             std::fs::create_dir_all(&data_dir).map_err(|e| SdkError::Internal(e.into()))?;
         }
+
+        let store =
+            PersistentStore::open(config.sdk_state_path.clone()).map_err(SdkError::Internal)?;
+        let effective_gas_limit = store
+            .state()
+            .gas_limit_override
+            .unwrap_or(DEFAULT_WALLET_GAS_LIMIT);
+        let overrides = wallet::config::WalletConfigOverrides {
+            gas_limit: Some(effective_gas_limit),
+            ..Default::default()
+        };
+
+        let mut wallet_config =
+            WalletConfig::from_path_or_initialize_default(&config.wallet_config_path)
+                .map_err(SdkError::Internal)?;
+        wallet_config.apply_overrides(overrides.clone());
+
+        let inner_client =
+            WalletCore::client_from_config(&wallet_config).map_err(SdkError::Internal)?;
+        let client = TestnetSequencerClient::new(inner_client);
+
         let wallet = if config.wallet_storage_path.exists() {
-            WalletCore::new_update_chain(
+            WalletCore::new_update_chain_with_client(
                 config.wallet_config_path.clone(),
                 config.wallet_storage_path.clone(),
-                None,
+                Some(overrides),
                 password,
+                client,
             )
             .map_err(SdkError::Internal)?
         } else {
-            let (wallet, _mnemonic) = WalletCore::new_init_storage(
+            let (wallet, _mnemonic) = WalletCore::new_init_storage_with_client(
                 config.wallet_config_path.clone(),
                 config.wallet_storage_path.clone(),
-                None,
+                Some(overrides),
                 password,
+                client,
             )
             .map_err(SdkError::Internal)?;
             wallet
         };
 
         Self::new(wallet, approval_handler, config)
+    }
+
+    pub async fn get_gas_limit(&self) -> u64 {
+        let store = self.store.lock().await;
+        if let Some(limit) = store.state().gas_limit_override {
+            limit
+        } else {
+            let wallet = self.wallet.lock().await;
+            wallet.config().gas_limit
+        }
+    }
+
+    pub async fn set_gas_limit(&self, limit: u64) -> SdkResult<()> {
+        {
+            let mut store = self.store.lock().await;
+            store.state_mut().gas_limit_override = Some(limit);
+            store.save().map_err(SdkError::Internal)?;
+        }
+        {
+            let mut wallet = self.wallet.lock().await;
+            let mut cfg = wallet.config().clone();
+            cfg.gas_limit = limit;
+            wallet.set_config(cfg);
+            if let Err(e) = wallet.store_config_changes().await {
+                log::warn!("Failed to persist updated wallet config to disk: {:?}", e);
+            }
+        }
+        Ok(())
     }
 
     pub async fn grant_account(
@@ -462,6 +531,119 @@ impl SdkEngine {
         Ok(())
     }
 
+    pub async fn resolve_account(&self, input: &str) -> SdkResult<ResolvedAccountInfo> {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return Err(SdkError::InvalidArgument("Empty account address".into()));
+        }
+
+        // 1. Check LNS domain name
+        if trimmed.ends_with(".lez") {
+            let dest = self
+                .resolver
+                .resolve(trimmed)
+                .await
+                .map_err(|e| SdkError::NameResolutionError(e.to_string()))?
+                .ok_or_else(|| {
+                    SdkError::InvalidArgument(format!("Name '{}' not found", trimmed))
+                })?;
+            let account_id = dest.account.ok_or_else(|| {
+                SdkError::InvalidArgument(format!("Name '{}' has no account record", trimmed))
+            })?;
+            return Ok(ResolvedAccountInfo {
+                account_id,
+                privacy: AccountPrivacy::Public,
+                canonical_address: format!("Public/{}", account_id),
+                label: Some(trimmed.to_string()),
+                is_local: false,
+            });
+        }
+
+        // 2. Check explicit prefix
+        let (raw_str, explicit_privacy) = if let Some(stripped) = trimmed
+            .strip_prefix("Public/")
+            .or_else(|| trimmed.strip_prefix("public/"))
+        {
+            (stripped, Some(AccountPrivacy::Public))
+        } else if let Some(stripped) = trimmed
+            .strip_prefix("Private/")
+            .or_else(|| trimmed.strip_prefix("private/"))
+        {
+            (stripped, Some(AccountPrivacy::Private))
+        } else {
+            (trimmed, None)
+        };
+
+        let account_id = raw_str.parse::<AccountId>().map_err(|e| {
+            SdkError::InvalidArgument(format!("Invalid account id '{}': {}", trimmed, e))
+        })?;
+
+        let wallet = self.wallet.lock().await;
+        let store = self.store.lock().await;
+        let custom_labels = &store.state().account_labels;
+
+        let is_private_local = wallet
+            .storage()
+            .key_chain()
+            .private_account(account_id)
+            .is_some()
+            || wallet
+                .storage()
+                .key_chain()
+                .shared_private_account(account_id)
+                .is_some();
+        let is_public_local = wallet
+            .storage()
+            .key_chain()
+            .pub_account_signing_key(account_id)
+            .is_some();
+
+        let privacy = if let Some(p) = explicit_privacy {
+            p
+        } else if is_private_local {
+            AccountPrivacy::Private
+        } else if is_public_local {
+            AccountPrivacy::Public
+        } else {
+            // Check if account has public representation on-chain
+            if let Ok(Some(_)) = wallet.get_account_public(account_id).await {
+                AccountPrivacy::Public
+            } else {
+                AccountPrivacy::Public
+            }
+        };
+
+        let is_local = is_private_local || is_public_local;
+        let prefix = match privacy {
+            AccountPrivacy::Public => "Public",
+            AccountPrivacy::Private => "Private",
+        };
+        let canonical_address = format!("{}/{}", prefix, account_id);
+
+        let label = custom_labels
+            .get(&account_id.to_string())
+            .cloned()
+            .or_else(|| {
+                let target_privacy = match privacy {
+                    AccountPrivacy::Public => AccountIdWithPrivacy::Public(account_id),
+                    AccountPrivacy::Private => AccountIdWithPrivacy::Private(account_id),
+                };
+                wallet
+                    .storage()
+                    .labels_for_account(target_privacy)
+                    .next()
+                    .map(|l| l.as_ref().to_string())
+            });
+
+        Ok(ResolvedAccountInfo {
+            account_id,
+            privacy,
+            canonical_address,
+            label,
+            is_local,
+        })
+    }
+
     pub fn sessions(&self) -> &SessionStore {
         &self.sessions
     }
@@ -474,7 +656,7 @@ impl SdkEngine {
         &self.approval_handler
     }
 
-    pub fn wallet(&self) -> &Arc<Mutex<WalletCore<SequencerClient>>> {
+    pub fn wallet(&self) -> &Arc<Mutex<WalletCore<TestnetSequencerClient>>> {
         &self.wallet
     }
 
@@ -572,10 +754,29 @@ impl DAppApi for SdkEngine {
         self.require_grant(session_id, account, GrantKind::Read)
             .await?;
         let wallet = self.wallet.lock().await;
-        wallet
-            .get_account_balance(*account)
-            .await
-            .map_err(SdkError::Internal)
+        if wallet
+            .storage()
+            .key_chain()
+            .private_account(*account)
+            .is_some()
+            || wallet
+                .storage()
+                .key_chain()
+                .shared_private_account(*account)
+                .is_some()
+        {
+            let shielded = wallet
+                .private_account_state(*account)
+                .and_then(|acc| acc.data.native_balance().ok())
+                .unwrap_or(0);
+            let public_bal = wallet.get_account_balance(*account).await.unwrap_or(0);
+            Ok(shielded + public_bal)
+        } else {
+            wallet
+                .get_account_balance(*account)
+                .await
+                .map_err(SdkError::Internal)
+        }
     }
 
     async fn propose_native_transfer(
@@ -584,6 +785,7 @@ impl DAppApi for SdkEngine {
         from: AccountId,
         to: String,
         amount: u128,
+        from_privacy: Option<AccountPrivacy>,
     ) -> SdkResult<RequestId> {
         self.require_grant(session_id, &from, GrantKind::Propose)
             .await?;
@@ -594,32 +796,50 @@ impl DAppApi for SdkEngine {
             ));
         }
 
+        let to_trimmed = to.trim();
+        let is_to_explicit_private = to_trimmed.to_lowercase().starts_with("private/");
+        let is_to_explicit_public = to_trimmed.to_lowercase().starts_with("public/");
+
         let to_account = self.resolve_destination(&to).await?;
 
-        if from == to_account {
+        let (is_from_private, is_to_private) = {
             let wallet = self.wallet.lock().await;
-            let is_from_private = wallet
-                .storage()
-                .key_chain()
-                .managed_private_account(from)
-                .is_some()
-                || wallet.storage().key_chain().private_account(from).is_some();
-            let is_to_private = wallet
-                .storage()
-                .key_chain()
-                .managed_private_account(to_account)
-                .is_some()
-                || wallet
+            let from_priv = match from_privacy {
+                Some(AccountPrivacy::Private) => true,
+                Some(AccountPrivacy::Public) => false,
+                None => {
+                    wallet
+                        .storage()
+                        .key_chain()
+                        .managed_private_account(from)
+                        .is_some()
+                        || wallet.storage().key_chain().private_account(from).is_some()
+                }
+            };
+            let to_priv = if is_to_explicit_private {
+                true
+            } else if is_to_explicit_public {
+                false
+            } else {
+                wallet
                     .storage()
                     .key_chain()
-                    .private_account(to_account)
-                    .is_some();
-            if is_from_private == is_to_private {
-                return Err(SdkError::InvalidArgument(format!(
-                    "Cannot transfer to the same account: {}",
-                    from
-                )));
-            }
+                    .managed_private_account(to_account)
+                    .is_some()
+                    || wallet
+                        .storage()
+                        .key_chain()
+                        .private_account(to_account)
+                        .is_some()
+            };
+            (from_priv, to_priv)
+        };
+
+        if from == to_account && is_from_private == is_to_private {
+            return Err(SdkError::InvalidArgument(format!(
+                "Cannot transfer to the same account: {}",
+                from
+            )));
         }
 
         let request = PendingRequest::new(
@@ -632,9 +852,9 @@ impl DAppApi for SdkEngine {
         );
         let request_id = request.id.clone();
 
+        let current_gas_limit = self.get_gas_limit().await;
         let summary = ApprovalPrompt::auto_summary(&request);
-        let effects =
-            EffectSimulator::native_transfer(from, to_account, amount, wallet::DEFAULT_GAS_LIMIT);
+        let effects = EffectSimulator::native_transfer(from, to_account, amount, current_gas_limit);
 
         let verification = self
             .verifier
@@ -675,59 +895,158 @@ impl DAppApi for SdkEngine {
                 ApprovalDecision::Approve => {
                     requests.set_status(&rid, RequestStatus::Approved).await;
                     let w = wallet.lock().await;
-                    let is_from_private = w
-                        .storage()
-                        .key_chain()
-                        .managed_private_account(from)
-                        .is_some()
-                        || w.storage().key_chain().private_account(from).is_some();
-                    let is_to_private = w
-                        .storage()
-                        .key_chain()
-                        .managed_private_account(to_account)
-                        .is_some()
-                        || w.storage()
-                            .key_chain()
-                            .private_account(to_account)
-                            .is_some();
 
-                    let sender = if is_from_private {
-                        wallet::AccountIdentity::PrivateOwned(from)
-                    } else {
-                        wallet::AccountIdentity::Public(from)
-                    };
+                    let client = w.client().clone();
+                    let protocol_version = client.detect_protocol_version().await;
 
-                    let recipient = if is_to_private {
-                        wallet::AccountIdentity::PrivateOwned(to_account)
-                    } else {
-                        wallet::AccountIdentity::PublicNoSign(to_account)
-                    };
-
-                    let facade =
-                        wallet::program_facades::native_token_transfer::NativeTokenTransfer(&w);
-                    match facade
-                        .transfer(
-                            sender,
-                            recipient,
-                            amount,
-                            wallet::program_facades::CreditDelivery::Automatic,
-                        )
-                        .await
+                    if protocol_version == SequencerProtocolVersion::V03ShardModel
+                        && !is_from_private
+                        && !is_to_private
                     {
-                        Ok((tx_hash, _secrets)) => {
-                            requests
-                                .set_status(&rid, RequestStatus::Submitted { tx_hash })
-                                .await;
+                        let signing_key = match w.get_account_public_signing_key(from) {
+                            Some(k) => k.clone(),
+                            None => {
+                                requests
+                                    .set_status(
+                                        &rid,
+                                        RequestStatus::Failed {
+                                            reason: format!(
+                                                "No public signing key found for account {}",
+                                                from
+                                            ),
+                                        },
+                                    )
+                                    .await;
+                                return;
+                            }
+                        };
+
+                        let nonce = match w.get_accounts_nonces(&[from]).await {
+                            Ok(nonces) => nonces
+                                .into_iter()
+                                .next()
+                                .unwrap_or(lee_core::account::Nonce(0)),
+                            Err(e) => {
+                                requests
+                                    .set_status(
+                                        &rid,
+                                        RequestStatus::Failed {
+                                            reason: format!("Failed to fetch account nonce: {}", e),
+                                        },
+                                    )
+                                    .await;
+                                return;
+                            }
+                        };
+
+                        let quote = client.get_fee_state().await.unwrap_or(
+                            sequencer_service_rpc::FeeStateQuote {
+                                height: 0,
+                                base_fee_exec: 8,
+                                base_fee_stor: 8,
+                                next_base_fee_exec_floor: 8,
+                                next_base_fee_exec_ceiling: 9,
+                                next_base_fee_stor_floor: 8,
+                                next_base_fee_stor_ceiling: 9,
+                                max_gas_exec: 10_000_000,
+                                max_gas_stor: 1_000_000,
+                            },
+                        );
+
+                        let gas_limit = w.config().gas_limit;
+
+                        match v03_compat::build_and_sign_v03_native_transfer(
+                            from,
+                            to_account,
+                            amount,
+                            nonce,
+                            &signing_key,
+                            gas_limit,
+                            quote.base_fee_exec,
+                        ) {
+                            Ok((payload, tx_hash)) => {
+                                match client.send_raw_transaction(payload).await {
+                                    Ok(returned_hash) => {
+                                        let final_hash =
+                                            if returned_hash == common::HashType::default() {
+                                                tx_hash
+                                            } else {
+                                                returned_hash
+                                            };
+                                        requests
+                                            .set_status(
+                                                &rid,
+                                                RequestStatus::Submitted {
+                                                    tx_hash: final_hash,
+                                                },
+                                            )
+                                            .await;
+                                    }
+                                    Err(e) => {
+                                        requests
+                                            .set_status(
+                                                &rid,
+                                                RequestStatus::Failed {
+                                                    reason: e.to_string(),
+                                                },
+                                            )
+                                            .await;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                requests
+                                    .set_status(
+                                        &rid,
+                                        RequestStatus::Failed {
+                                            reason: format!(
+                                                "Failed to construct v0.3 transfer: {}",
+                                                e
+                                            ),
+                                        },
+                                    )
+                                    .await;
+                            }
                         }
-                        Err(e) => {
-                            requests
-                                .set_status(
-                                    &rid,
-                                    RequestStatus::Failed {
-                                        reason: format!("{:?}", e),
-                                    },
-                                )
-                                .await;
+                    } else {
+                        let sender = if is_from_private {
+                            wallet::AccountIdentity::PrivateOwned(from)
+                        } else {
+                            wallet::AccountIdentity::Public(from)
+                        };
+
+                        let recipient = if is_to_private {
+                            wallet::AccountIdentity::PrivateOwned(to_account)
+                        } else {
+                            wallet::AccountIdentity::PublicNoSign(to_account)
+                        };
+
+                        let facade =
+                            wallet::program_facades::native_token_transfer::NativeTokenTransfer(&w);
+                        match facade
+                            .transfer(
+                                sender,
+                                recipient,
+                                amount,
+                                wallet::program_facades::CreditDelivery::Automatic,
+                            )
+                            .await
+                        {
+                            Ok((tx_hash, _secrets)) => {
+                                requests
+                                    .set_status(&rid, RequestStatus::Submitted { tx_hash })
+                                    .await;
+                            }
+                            Err(e) => {
+                                requests
+                                    .set_status(
+                                        &rid,
+                                        RequestStatus::Failed {
+                                            reason: format!("{:?}", e),
+                                        },
+                                    )
+                                    .await;
+                            }
                         }
                     }
                 }
@@ -798,13 +1117,14 @@ impl DAppApi for SdkEngine {
         );
         let request_id = request.id.clone();
 
+        let current_gas_limit = self.get_gas_limit().await;
         let summary = ApprovalPrompt::auto_summary(&request);
         let effects = EffectSimulator::token_transfer(
             from_holding,
             to_holding,
             definition,
             amount,
-            wallet::DEFAULT_GAS_LIMIT,
+            current_gas_limit,
         );
 
         let verification = self.verifier.verify(&definition).await;
@@ -878,23 +1198,140 @@ impl DAppApi for SdkEngine {
                             .select_program_actor_state(definition)
                     };
 
-                    let accounts = vec![sender_actor, recipient_actor];
-                    let message = amount.to_le_bytes().to_vec();
-                    match w.send_pub_tx(accounts, 0, message).await {
-                        Ok(tx_hash) => {
-                            requests
-                                .set_status(&rid, RequestStatus::Submitted { tx_hash })
-                                .await;
+                    let client = w.client().clone();
+                    let protocol_version = client.detect_protocol_version().await;
+
+                    if protocol_version == SequencerProtocolVersion::V03ShardModel
+                        && !is_from_private
+                        && !is_to_private
+                    {
+                        let signing_key = match w.get_account_public_signing_key(from_holding) {
+                            Some(k) => k.clone(),
+                            None => {
+                                requests
+                                    .set_status(
+                                        &rid,
+                                        RequestStatus::Failed {
+                                            reason: format!(
+                                                "No public signing key found for account {}",
+                                                from_holding
+                                            ),
+                                        },
+                                    )
+                                    .await;
+                                return;
+                            }
+                        };
+
+                        let nonce = match w.get_accounts_nonces(&[from_holding]).await {
+                            Ok(nonces) => nonces
+                                .into_iter()
+                                .next()
+                                .unwrap_or(lee_core::account::Nonce(0)),
+                            Err(e) => {
+                                requests
+                                    .set_status(
+                                        &rid,
+                                        RequestStatus::Failed {
+                                            reason: format!("Failed to fetch account nonce: {}", e),
+                                        },
+                                    )
+                                    .await;
+                                return;
+                            }
+                        };
+
+                        let quote = client.get_fee_state().await.unwrap_or(
+                            sequencer_service_rpc::FeeStateQuote {
+                                height: 0,
+                                base_fee_exec: 8,
+                                base_fee_stor: 8,
+                                next_base_fee_exec_floor: 8,
+                                next_base_fee_exec_ceiling: 9,
+                                next_base_fee_stor_floor: 8,
+                                next_base_fee_stor_ceiling: 9,
+                                max_gas_exec: 10_000_000,
+                                max_gas_stor: 1_000_000,
+                            },
+                        );
+
+                        let gas_limit = w.config().gas_limit;
+                        let mentions = vec![to_holding];
+                        let calldata = amount.to_le_bytes().to_vec();
+
+                        match v03_compat::build_and_sign_v03_contract_call(
+                            definition,
+                            from_holding,
+                            nonce,
+                            &signing_key,
+                            &mentions,
+                            calldata,
+                            gas_limit,
+                            quote.base_fee_exec,
+                        ) {
+                            Ok((payload, tx_hash)) => {
+                                match client.send_raw_transaction(payload).await {
+                                    Ok(returned_hash) => {
+                                        let final_hash =
+                                            if returned_hash == common::HashType::default() {
+                                                tx_hash
+                                            } else {
+                                                returned_hash
+                                            };
+                                        requests
+                                            .set_status(
+                                                &rid,
+                                                RequestStatus::Submitted {
+                                                    tx_hash: final_hash,
+                                                },
+                                            )
+                                            .await;
+                                    }
+                                    Err(e) => {
+                                        requests
+                                            .set_status(
+                                                &rid,
+                                                RequestStatus::Failed {
+                                                    reason: e.to_string(),
+                                                },
+                                            )
+                                            .await;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                requests
+                                    .set_status(
+                                        &rid,
+                                        RequestStatus::Failed {
+                                            reason: format!(
+                                                "Failed to construct v0.3 token transfer: {}",
+                                                e
+                                            ),
+                                        },
+                                    )
+                                    .await;
+                            }
                         }
-                        Err(e) => {
-                            requests
-                                .set_status(
-                                    &rid,
-                                    RequestStatus::Failed {
-                                        reason: format!("{:?}", e),
-                                    },
-                                )
-                                .await;
+                    } else {
+                        let accounts = vec![sender_actor, recipient_actor];
+                        let message = amount.to_le_bytes().to_vec();
+                        match w.send_pub_tx(accounts, 0, message).await {
+                            Ok(tx_hash) => {
+                                requests
+                                    .set_status(&rid, RequestStatus::Submitted { tx_hash })
+                                    .await;
+                            }
+                            Err(e) => {
+                                requests
+                                    .set_status(
+                                        &rid,
+                                        RequestStatus::Failed {
+                                            reason: format!("{:?}", e),
+                                        },
+                                    )
+                                    .await;
+                            }
                         }
                     }
                 }
@@ -1030,21 +1467,145 @@ impl DAppApi for SdkEngine {
                             };
                             accounts.push(identity.select_program_actor_state(program));
                         }
-                        match w.send_pub_tx(accounts, 0, calldata_to_send).await {
-                            Ok(tx_hash) => {
-                                requests
-                                    .set_status(&rid, RequestStatus::Submitted { tx_hash })
-                                    .await;
+                        let client = w.client().clone();
+                        let protocol_version = client.detect_protocol_version().await;
+                        let any_private = mentions_to_send.iter().any(|&acc| {
+                            w.storage()
+                                .key_chain()
+                                .managed_private_account(acc)
+                                .is_some()
+                                || w.storage().key_chain().private_account(acc).is_some()
+                        });
+
+                        if protocol_version == SequencerProtocolVersion::V03ShardModel
+                            && !any_private
+                        {
+                            let payer_id = *primary;
+                            let signing_key = match w.get_account_public_signing_key(payer_id) {
+                                Some(k) => k.clone(),
+                                None => {
+                                    requests
+                                        .set_status(
+                                            &rid,
+                                            RequestStatus::Failed {
+                                                reason: format!("No public signing key found for primary account {}", payer_id),
+                                            },
+                                        )
+                                        .await;
+                                    return;
+                                }
+                            };
+
+                            let nonce = match w.get_accounts_nonces(&[payer_id]).await {
+                                Ok(nonces) => nonces
+                                    .into_iter()
+                                    .next()
+                                    .unwrap_or(lee_core::account::Nonce(0)),
+                                Err(e) => {
+                                    requests
+                                        .set_status(
+                                            &rid,
+                                            RequestStatus::Failed {
+                                                reason: format!(
+                                                    "Failed to fetch account nonce: {}",
+                                                    e
+                                                ),
+                                            },
+                                        )
+                                        .await;
+                                    return;
+                                }
+                            };
+
+                            let quote = client.get_fee_state().await.unwrap_or(
+                                sequencer_service_rpc::FeeStateQuote {
+                                    height: 0,
+                                    base_fee_exec: 8,
+                                    base_fee_stor: 8,
+                                    next_base_fee_exec_floor: 8,
+                                    next_base_fee_exec_ceiling: 9,
+                                    next_base_fee_stor_floor: 8,
+                                    next_base_fee_stor_ceiling: 9,
+                                    max_gas_exec: 10_000_000,
+                                    max_gas_stor: 1_000_000,
+                                },
+                            );
+
+                            let gas_limit = w.config().gas_limit;
+                            let other_mentions: Vec<AccountId> =
+                                mentions_to_send.iter().copied().skip(1).collect();
+
+                            match v03_compat::build_and_sign_v03_contract_call(
+                                program,
+                                payer_id,
+                                nonce,
+                                &signing_key,
+                                &other_mentions,
+                                calldata_to_send,
+                                gas_limit,
+                                quote.base_fee_exec,
+                            ) {
+                                Ok((payload, tx_hash)) => {
+                                    match client.send_raw_transaction(payload).await {
+                                        Ok(returned_hash) => {
+                                            let final_hash =
+                                                if returned_hash == common::HashType::default() {
+                                                    tx_hash
+                                                } else {
+                                                    returned_hash
+                                                };
+                                            requests
+                                                .set_status(
+                                                    &rid,
+                                                    RequestStatus::Submitted {
+                                                        tx_hash: final_hash,
+                                                    },
+                                                )
+                                                .await;
+                                        }
+                                        Err(e) => {
+                                            requests
+                                                .set_status(
+                                                    &rid,
+                                                    RequestStatus::Failed {
+                                                        reason: e.to_string(),
+                                                    },
+                                                )
+                                                .await;
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    requests
+                                        .set_status(
+                                            &rid,
+                                            RequestStatus::Failed {
+                                                reason: format!(
+                                                    "Failed to construct v0.3 transaction: {}",
+                                                    e
+                                                ),
+                                            },
+                                        )
+                                        .await;
+                                }
                             }
-                            Err(e) => {
-                                requests
-                                    .set_status(
-                                        &rid,
-                                        RequestStatus::Failed {
-                                            reason: format!("{:?}", e),
-                                        },
-                                    )
-                                    .await;
+                        } else {
+                            match w.send_pub_tx(accounts, 0, calldata_to_send).await {
+                                Ok(tx_hash) => {
+                                    requests
+                                        .set_status(&rid, RequestStatus::Submitted { tx_hash })
+                                        .await;
+                                }
+                                Err(e) => {
+                                    requests
+                                        .set_status(
+                                            &rid,
+                                            RequestStatus::Failed {
+                                                reason: format!("{:?}", e),
+                                            },
+                                        )
+                                        .await;
+                                }
                             }
                         }
                     }
@@ -1161,24 +1722,148 @@ impl DAppApi for SdkEngine {
                         accounts.push(identity.select_program_actor_state(program_id));
                     }
 
-                    match w
-                        .send_pub_tx_paid_by(accounts, 0, calldata, Some(payer_id))
-                        .await
-                    {
-                        Ok(tx_hash) => {
-                            requests
-                                .set_status(&rid, RequestStatus::Submitted { tx_hash })
-                                .await;
+                    let client = w.client().clone();
+                    let protocol_version = client.detect_protocol_version().await;
+                    let any_private = mentions.iter().any(|&acc| {
+                        w.storage()
+                            .key_chain()
+                            .managed_private_account(acc)
+                            .is_some()
+                            || w.storage().key_chain().private_account(acc).is_some()
+                    }) || w
+                        .storage()
+                        .key_chain()
+                        .managed_private_account(payer_id)
+                        .is_some()
+                        || w.storage().key_chain().private_account(payer_id).is_some();
+
+                    if protocol_version == SequencerProtocolVersion::V03ShardModel && !any_private {
+                        let signing_key = match w.get_account_public_signing_key(payer_id) {
+                            Some(k) => k.clone(),
+                            None => {
+                                requests
+                                    .set_status(
+                                        &rid,
+                                        RequestStatus::Failed {
+                                            reason: format!(
+                                                "No public signing key found for payer {}",
+                                                payer_id
+                                            ),
+                                        },
+                                    )
+                                    .await;
+                                return;
+                            }
+                        };
+
+                        let nonce = match w.get_accounts_nonces(&[payer_id]).await {
+                            Ok(nonces) => nonces
+                                .into_iter()
+                                .next()
+                                .unwrap_or(lee_core::account::Nonce(0)),
+                            Err(e) => {
+                                requests
+                                    .set_status(
+                                        &rid,
+                                        RequestStatus::Failed {
+                                            reason: format!("Failed to fetch account nonce: {}", e),
+                                        },
+                                    )
+                                    .await;
+                                return;
+                            }
+                        };
+
+                        let quote = client.get_fee_state().await.unwrap_or(
+                            sequencer_service_rpc::FeeStateQuote {
+                                height: 0,
+                                base_fee_exec: 8,
+                                base_fee_stor: 8,
+                                next_base_fee_exec_floor: 8,
+                                next_base_fee_exec_ceiling: 9,
+                                next_base_fee_stor_floor: 8,
+                                next_base_fee_stor_ceiling: 9,
+                                max_gas_exec: 10_000_000,
+                                max_gas_stor: 1_000_000,
+                            },
+                        );
+
+                        let gas_limit = w.config().gas_limit;
+
+                        match v03_compat::build_and_sign_v03_contract_call(
+                            program_id,
+                            payer_id,
+                            nonce,
+                            &signing_key,
+                            &mentions,
+                            calldata,
+                            gas_limit,
+                            quote.base_fee_exec,
+                        ) {
+                            Ok((payload, tx_hash)) => {
+                                match client.send_raw_transaction(payload).await {
+                                    Ok(returned_hash) => {
+                                        let final_hash =
+                                            if returned_hash == common::HashType::default() {
+                                                tx_hash
+                                            } else {
+                                                returned_hash
+                                            };
+                                        requests
+                                            .set_status(
+                                                &rid,
+                                                RequestStatus::Submitted {
+                                                    tx_hash: final_hash,
+                                                },
+                                            )
+                                            .await;
+                                    }
+                                    Err(e) => {
+                                        requests
+                                            .set_status(
+                                                &rid,
+                                                RequestStatus::Failed {
+                                                    reason: e.to_string(),
+                                                },
+                                            )
+                                            .await;
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                requests
+                                    .set_status(
+                                        &rid,
+                                        RequestStatus::Failed {
+                                            reason: format!(
+                                                "Failed to construct v0.3 contract call: {}",
+                                                e
+                                            ),
+                                        },
+                                    )
+                                    .await;
+                            }
                         }
-                        Err(e) => {
-                            requests
-                                .set_status(
-                                    &rid,
-                                    RequestStatus::Failed {
-                                        reason: format!("{:?}", e),
-                                    },
-                                )
-                                .await;
+                    } else {
+                        match w
+                            .send_pub_tx_paid_by(accounts, 0, calldata, Some(payer_id))
+                            .await
+                        {
+                            Ok(tx_hash) => {
+                                requests
+                                    .set_status(&rid, RequestStatus::Submitted { tx_hash })
+                                    .await;
+                            }
+                            Err(e) => {
+                                requests
+                                    .set_status(
+                                        &rid,
+                                        RequestStatus::Failed {
+                                            reason: format!("{:?}", e),
+                                        },
+                                    )
+                                    .await;
+                            }
                         }
                     }
                 }
@@ -1326,9 +2011,27 @@ impl OwnerApi for SdkEngine {
         let config_path = self.config.wallet_config_path.clone();
         let storage_path = self.config.wallet_storage_path.clone();
 
-        let (new_wallet, mnemonic) =
-            WalletCore::new_init_storage(config_path, storage_path, None, password)
-                .map_err(SdkError::Internal)?;
+        let effective_gas_limit = self.get_gas_limit().await;
+        let overrides = wallet::config::WalletConfigOverrides {
+            gas_limit: Some(effective_gas_limit),
+            ..Default::default()
+        };
+
+        let mut wallet_config = WalletConfig::from_path_or_initialize_default(&config_path)
+            .map_err(SdkError::Internal)?;
+        wallet_config.apply_overrides(overrides.clone());
+        let inner_client =
+            WalletCore::client_from_config(&wallet_config).map_err(SdkError::Internal)?;
+        let client = TestnetSequencerClient::new(inner_client);
+
+        let (new_wallet, mnemonic) = WalletCore::new_init_storage_with_client(
+            config_path,
+            storage_path,
+            Some(overrides),
+            password,
+            client,
+        )
+        .map_err(SdkError::Internal)?;
 
         let mut wallet = self.wallet.lock().await;
         *wallet = new_wallet;
@@ -1503,11 +2206,15 @@ impl OwnerApi for SdkEngine {
                         .next()
                         .map(|l| l.as_ref().to_string())
                 });
+            let shielded_bal = wallet
+                .private_account_state(account_id)
+                .and_then(|acc| acc.data.native_balance().ok())
+                .unwrap_or(0);
             views.push(AccountView {
                 account_id,
                 privacy: AccountPrivacy::Private,
                 label: label_text,
-                balance: None,
+                balance: Some(shielded_bal),
             });
         }
 
@@ -1581,7 +2288,14 @@ impl OwnerApi for SdkEngine {
 }
 
 fn parse_account_id(input: &str) -> SdkResult<AccountId> {
-    input
+    let trimmed = input.trim();
+    let clean = trimmed
+        .strip_prefix("Public/")
+        .or_else(|| trimmed.strip_prefix("public/"))
+        .or_else(|| trimmed.strip_prefix("Private/"))
+        .or_else(|| trimmed.strip_prefix("private/"))
+        .unwrap_or(trimmed);
+    clean
         .parse::<AccountId>()
         .map_err(|e| SdkError::InvalidArgument(format!("invalid account id '{}': {}", input, e)))
 }

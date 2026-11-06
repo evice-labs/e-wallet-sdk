@@ -44,6 +44,7 @@ lez-wallet-sdk/
 ├── integration-tests/          # End-to-end integration test suites
 ├── docs/                       # Specifications and technical documentation
 │   ├── ARCHITECTURE.md         # Comprehensive system architecture & technical specification
+│   ├── protocol-compatibility-and-invariants.md # Protocol state separation, circuit invariants & v0.3/v0.4 compatibility
 │   ├── sdk-api-reference.md    # Complete SDK API reference & JSON wire format
 │   ├── program-deployment.md   # Smart contract compilation, deployment & dispatcher guide
 │   └── testnet-deployment-evidence.md # On-chain testnet deployment logs, block heights & transaction hashes
@@ -143,11 +144,30 @@ lez-wallet-sdk/
 - **Account Selection & Consent:** Resolves connecting dApp account selection prompts via `ApprovalHandler::request_account_selection`, granting `GrantKind::Read` and `GrantKind::Propose` to authorized accounts while filtering internal identity accounts from account listings.
 - **Logos DAO Governance Reference Mini-App:** Demonstrates end-to-end integration of Wallet Provider SDK and Identity Accountability (Domain 6) for anonymous, Sybil-resistant voting via scoped nullifiers and BIP-340 Schnorr ballot attestations.
 
+#### 14. Dynamic Dual-Protocol Compatibility (`v03_compat.rs`, `client.rs`, `api.rs`)
+- **Native Dual-Protocol Engine:** Supports seamless bidirectional transaction compatibility between canonical live testnets running LEZ v0.3.x (`V03ShardModel`, such as `https://testnet.lez.logos.co`) and modern nodes running LEZ v0.4.x (`V04ActorModel`).
+- **Authentic LEZ v0.3 Borsh Wire Layout (`v03_compat.rs`):** Constructs byte-for-byte protocol-compliant wire payloads (`V03ProgramShardSelector`, `V03FeeDeclaration`, `V03Message`, `V03WitnessSet`, `V03PublicTransaction`, `V03LeeTransaction`) using canonical LEZ v0.3 pre-image hash prefixes (`/LEE/v0.3/Message/Public/...`) and signature sets.
+- **Adaptive Protocol Version Probing (`detect_protocol_version`):** Automatically and non-intrusively detects the target sequencer protocol schema at runtime via schema probing and caches the detected protocol version (`V03ShardModel` vs `V04ActorModel`).
+- **Full RPC Error Preservation:** Preserves `code`, `message`, and `data` in JSON-RPC errors (preventing upstream error masking), allowing granular diagnosis of on-chain sequencer rejections.
+- **Strict Git Commit Pinning:** Locks all upstream LEZ dependencies in `Cargo.toml` to explicit commit hash `5562eeeb200d67c51ba58976ba7b0bb63c19a142` without local path overrides, guaranteeing clean reproducible upstream compatibility.
+- **Universal Account Identifier Resolution (`resolve_account` / `lez_wallet_resolve_account`):** Unified resolution accepting raw Base58, prefixed `Public/...`, `Private/...`, or `*.lez` domain names, returning canonical address, privacy type, label, and local keystore ownership.
+- **Shielded + Public Balance Aggregation:** Aggregates zero-knowledge circuit shielded pool and public pool balances for private accounts with formatted thousand-separator presentation.
+
+#### 15. Dynamic Fee Quoting & Gas Baseline Calibration (`api.rs`, `store.rs`, `v03_compat.rs`)
+- **Calibrated Gas Limit Baseline (`DEFAULT_WALLET_GAS_LIMIT` = 200,000):** Establishes a robust execution gas baseline (200,000 units) that accommodates both standard transfers (~27,000 gas) and smart contract executions, paired with dynamic on-chain fee calculation (`v03_max_fee_for` / `get_fee_state`) preventing `MaxFeeBelowReserve` while staying well within user balances to avoid `PayerCannotFund`.
+- **Idiomatic Upstream Config Overrides:** Injects the effective gas limit into upstream `WalletCore` via `WalletConfigOverrides` during `open_or_init` and `create_wallet`, ensuring active in-memory transactions match on-chain fee requirements.
+- **Dynamic Configuration & C-ABI FFI:** Exposes `get_gas_limit()` and `set_gas_limit(limit: u64)` across SDK Engine and C FFI (`lez_wallet_get_gas_limit`, `lez_wallet_set_gas_limit`) with persistent override storage in `sdk_state.json`.
+
+#### 16. Protocol Invariants & State Transition Guardrails (`docs/protocol-compatibility-and-invariants.md`)
+- **Dual Cryptographic Account Boundaries:** Distinguishes elliptic-curve authenticated Public accounts from lattice-based (ML-KEM-768) and SNARK-based (BabyJubjub/Poseidon) Private accounts, documenting the impossibility of producing ECDSA signatures from private account keys.
+- **Asymmetric Deposit Trap Mitigation:** Identifies the protocol-level lockup that occurs when transparent native balances are deposited into private account shards (`Public/<id>`), providing architectural guardrails for downstream client applications.
+- **Comprehensive Technical Reference:** For in-depth architectural and mathematical analysis, see [docs/protocol-compatibility-and-invariants.md](docs/protocol-compatibility-and-invariants.md).
+
 ## Quick Start
 
 ### Prerequisites
 - **Rust Toolchain:** Pinned to Rust 1.98.1+ via `rust-toolchain.toml`.
-- **LEZ Monorepo:** Pinned directly via Cargo Git dependencies tracking `https://github.com/logos-blockchain/logos-execution-zone` (`dev` branch), making the SDK completely standalone without requiring local sibling checkouts.
+- **LEZ Monorepo:** Pinned directly via Cargo Git dependencies tracking `https://github.com/logos-blockchain/logos-execution-zone` (commit `5562eee`), making the SDK completely standalone without requiring local sibling checkouts.
 
 ### Building & Checking
 Commands can be run via the [`Justfile`](Justfile) task runner or directly with `cargo`:

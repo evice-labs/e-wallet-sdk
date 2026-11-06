@@ -155,6 +155,21 @@ pub struct AccountViewDto {
     pub privacy: String,
     pub label: Option<String>,
     pub balance: Option<String>,
+    pub formatted_balance: Option<String>,
+}
+
+pub fn format_thousand_separator(amount: u128) -> String {
+    let s = amount.to_string();
+    let mut result = String::new();
+    let chars: Vec<char> = s.chars().collect();
+    let len = chars.len();
+    for (i, c) in chars.into_iter().enumerate() {
+        if i > 0 && (len - i).is_multiple_of(3) {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    format!("{}.00", result)
 }
 
 impl From<&AccountView> for AccountViewDto {
@@ -167,6 +182,7 @@ impl From<&AccountView> for AccountViewDto {
             },
             label: view.label.clone(),
             balance: view.balance.map(|b| b.to_string()),
+            formatted_balance: view.balance.map(format_thousand_separator),
         }
     }
 }
@@ -511,6 +527,36 @@ pub unsafe extern "C" fn lez_wallet_set_approval_callback(
         let ffi = unsafe { &*engine };
         ffi.approval_handler.set_callback(callback, user_data);
         success_json()
+    })
+}
+
+/// Get the current gas limit seed configured for transactions.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lez_wallet_get_gas_limit(engine: *mut FfiSdkEngine) -> u64 {
+    catch_ffi(sdk_engine::api::DEFAULT_WALLET_GAS_LIMIT, || {
+        if engine.is_null() {
+            return sdk_engine::api::DEFAULT_WALLET_GAS_LIMIT;
+        }
+        let ffi = unsafe { &*engine };
+        ffi.runtime.block_on(ffi.engine.get_gas_limit())
+    })
+}
+
+/// Set the gas limit seed for transactions.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lez_wallet_set_gas_limit(
+    engine: *mut FfiSdkEngine,
+    limit: u64,
+) -> *mut c_char {
+    catch_ffi(error_json("FFI panic"), || {
+        if engine.is_null() {
+            return error_json("Null engine handle");
+        }
+        let ffi = unsafe { &*engine };
+        match ffi.runtime.block_on(ffi.engine.set_gas_limit(limit)) {
+            Ok(()) => success_json(),
+            Err(e) => error_json(&format!("{:?}", e)),
+        }
     })
 }
 
@@ -1093,7 +1139,14 @@ pub unsafe extern "C" fn lez_wallet_propose_native_transfer(
         };
 
         let sid = SessionId(sess_str.to_string());
-        let from = match AccountId::from_str(from_str) {
+        let clean_from = from_str
+            .trim()
+            .strip_prefix("Public/")
+            .or_else(|| from_str.trim().strip_prefix("public/"))
+            .or_else(|| from_str.trim().strip_prefix("Private/"))
+            .or_else(|| from_str.trim().strip_prefix("private/"))
+            .unwrap_or(from_str.trim());
+        let from = match AccountId::from_str(clean_from) {
             Ok(a) => a,
             Err(e) => return error_json(&format!("Invalid from account ID: {:?}", e)),
         };
@@ -1102,12 +1155,22 @@ pub unsafe extern "C" fn lez_wallet_propose_native_transfer(
             Err(e) => return error_json(&format!("Invalid amount integer: {:?}", e)),
         };
 
+        let from_lower = from_str.trim().to_lowercase();
+        let from_privacy = if from_lower.starts_with("public/") {
+            Some(sdk_engine::api::AccountPrivacy::Public)
+        } else if from_lower.starts_with("private/") {
+            Some(sdk_engine::api::AccountPrivacy::Private)
+        } else {
+            None
+        };
+
         let ffi = unsafe { &*engine };
         match ffi.runtime.block_on(ffi.engine.propose_native_transfer(
             &sid,
             from,
             to_str.to_string(),
             amount,
+            from_privacy,
         )) {
             Ok(req_id) => {
                 let json = serde_json::json!({
@@ -1525,6 +1588,42 @@ pub unsafe extern "C" fn lez_wallet_resolve_name(
             .block_on(ffi.engine.resolve_name(&sid, name_str))
         {
             Ok(dest) => ok_json(&ResolvedDestinationDto::from(&dest)),
+            Err(e) => error_json(&format!("{:?}", e)),
+        }
+    })
+}
+
+/// Resolve an account identifier (raw Base58, prefixed Public/..., prefixed Private/..., or *.lez name).
+/// Identifies privacy type, canonical address format, and user label.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn lez_wallet_resolve_account(
+    engine: *mut FfiSdkEngine,
+    input: *const c_char,
+) -> *mut c_char {
+    catch_ffi(error_json("FFI panic"), || {
+        if engine.is_null() {
+            return error_json("Null engine handle");
+        }
+        let input_str = match unsafe { parse_c_str(input) } {
+            Ok(s) => s,
+            Err(e) => return error_json(e),
+        };
+        let ffi = unsafe { &*engine };
+        match ffi.runtime.block_on(ffi.engine.resolve_account(input_str)) {
+            Ok(info) => {
+                let json = serde_json::json!({
+                    "ok": true,
+                    "account_id": info.account_id.to_string(),
+                    "privacy": match info.privacy {
+                        AccountPrivacy::Public => "public",
+                        AccountPrivacy::Private => "private",
+                    },
+                    "canonical_address": info.canonical_address,
+                    "label": info.label,
+                    "is_local": info.is_local,
+                });
+                to_c_string(&json.to_string())
+            }
             Err(e) => error_json(&format!("{:?}", e)),
         }
     })

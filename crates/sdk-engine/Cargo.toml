@@ -13,13 +13,13 @@ lee_core.workspace = true
 common.workspace = true
 key_protocol.workspace = true
 sequencer_service_rpc.workspace = true
-testimonial-program.workspace = true
 
 # Third-party
 argon2.workspace = true
 aes-gcm.workspace = true
 anyhow.workspace = true
 async-trait.workspace = true
+base64.workspace = true
 bip39.workspace = true
 borsh.workspace = true
 chrono.workspace = true
@@ -28,6 +28,7 @@ derive_more.workspace = true
 futures.workspace = true
 hex.workspace = true
 log.workspace = true
+jsonrpsee.workspace = true
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
