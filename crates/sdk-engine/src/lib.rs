@@ -15,6 +15,7 @@ pub mod request;
 pub mod resolve;
 pub mod session;
 pub mod store;
+pub mod v03_compat;
 pub mod verifier;
 
 // Re-export core types that consumers use constantly.

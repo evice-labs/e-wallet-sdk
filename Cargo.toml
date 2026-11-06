@@ -40,6 +40,7 @@ testimonial-program = { path = "programs/testimonial-program" }
 # Third-party crates
 anyhow          = "1.0.98"
 async-trait     = "0.1"
+base64          = "0.22"
 bip39           = "2.2.0"
 borsh           = "1.5.7"
 chrono          = { version = "0.4", features = ["serde"] }
