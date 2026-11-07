@@ -328,6 +328,28 @@ char *lez_wallet_prepare_identity_registration(struct FfiSdkEngine *engine,
                                                const char *node_pubkeys_json,
                                                uint8_t threshold_k);
 
+/**
+ * Start EmPoWer PoW mining across `threads` worker threads and notify L1 node (`PUT /pow/mining/start`).
+ */
+char *lez_wallet_pow_start_mining(struct FfiSdkEngine *engine, uint32_t threads);
+
+/**
+ * Stop EmPoWer PoW mining and notify L1 node (`PUT /pow/mining/stop`).
+ */
+char *lez_wallet_pow_stop_mining(struct FfiSdkEngine *engine);
+
+/**
+ * Query current EmPoWer PoW mining telemetry and unbridged L1 reward balance (`GET /pow/status`).
+ */
+char *lez_wallet_pow_status(struct FfiSdkEngine *engine);
+
+/**
+ * Execute an L1 ➝ LEZ `channelDeposit` for a transparent `Public` account (`POST /channel/deposit`).
+ */
+char *lez_wallet_channel_deposit(struct FfiSdkEngine *engine,
+                                 const char *recipient_account_id,
+                                 const char *amount_str);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus
