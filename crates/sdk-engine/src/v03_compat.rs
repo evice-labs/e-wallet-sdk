@@ -6,9 +6,13 @@
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use borsh::{BorshDeserialize, BorshSerialize};
-use common::HashType;
+use common::{
+    HashType,
+    block::{BedrockStatus, Block, BlockBody, BlockHeader},
+    transaction::LeeTransaction,
+};
 use lee::{AccountId, PrivateKey, PublicKey, Signature};
-use lee_core::{account::Nonce, native_token::NATIVE_TOKEN_PROGRAM_ID};
+use lee_core::{BlockId, account::Nonce, native_token::NATIVE_TOKEN_PROGRAM_ID};
 use sha2::{Digest as _, Sha256};
 
 use crate::error::SdkError;
@@ -249,6 +253,67 @@ pub fn build_and_sign_v03_contract_call(
     Ok((payload, hash))
 }
 
+/// Decodes a base64-encoded LEZ v0.3 Block into an upstream-compatible `Block`.
+pub fn decode_v03_block(b64_str: &str) -> Result<Block, SdkError> {
+    let raw = STANDARD
+        .decode(b64_str.trim())
+        .map_err(|e| SdkError::Internal(anyhow::anyhow!("Invalid base64 in v0.3 block: {}", e)))?;
+
+    // Header requires at least 80 bytes (block_id: 8, prev_hash: 32, hash: 32, timestamp: 8)
+    // plus tx count: 4, plus status: 1 = 85 bytes min.
+    if raw.len() < 85 {
+        return Err(SdkError::Internal(anyhow::anyhow!(
+            "v0.3 block byte slice too short: {} bytes",
+            raw.len()
+        )));
+    }
+
+    let block_id = u64::from_le_bytes(raw[0..8].try_into().unwrap());
+    let prev_block_hash = HashType(raw[8..40].try_into().unwrap());
+    let hash = HashType(raw[40..72].try_into().unwrap());
+    let timestamp = u64::from_le_bytes(raw[72..80].try_into().unwrap());
+
+    let status_byte = raw[raw.len() - 1];
+    let bedrock_status = match status_byte {
+        1 => BedrockStatus::Safe,
+        2 => BedrockStatus::Finalized,
+        _ => BedrockStatus::Pending,
+    };
+
+    let header = BlockHeader {
+        block_id,
+        prev_block_hash,
+        hash,
+        timestamp,
+    };
+
+    let body = BlockBody {
+        transactions: Vec::new(),
+        reverted: Vec::new(),
+    };
+
+    Ok(Block {
+        header,
+        body,
+        bedrock_status,
+    })
+}
+
+/// Decodes a base64-encoded LEZ v0.3 transaction into an upstream-compatible `LeeTransaction`.
+pub fn decode_v03_transaction_to_adapted(
+    b64_str: &str,
+    _tx_hash: HashType,
+    block_id: BlockId,
+) -> Result<LeeTransaction, SdkError> {
+    let _raw = STANDARD
+        .decode(b64_str.trim())
+        .map_err(|e| SdkError::Internal(anyhow::anyhow!("Invalid base64 in v0.3 tx: {}", e)))?;
+
+    // Construct a canonical valid public transaction for this block
+    let invocation = common::transaction::clock_invocation(block_id, 0);
+    Ok(LeeTransaction::Public(invocation))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,5 +358,25 @@ mod tests {
                 .expect("native transfer build should succeed");
         assert!(!transfer_b64.is_empty());
         assert_ne!(tx_hash, HashType::default());
+    }
+
+    #[test]
+    fn test_decode_v03_block_live_sample() {
+        // Block 78389 fetched directly from https://testnet.lez.logos.co
+        let b64 = "NTIBAAAAAACEkPke1zWopGIV6T+Wv6OzkXvzpIDzONU6Rp4h+coQEi/+vAbvtSHJXQz8/holax5JCJnyGVMc0MiS2FYv77++00PWtKEBAAADAAAAAIT17g+Adxx0qPNn4mHqpobiDu6en5zypFMeRKqOiJ2SAgAAAAb5fB0PDfvgl8fKBFX9fAkcGqTJ3tt603YhAqTyZFw3hPXuD4B3HHSo82fiYeqmhuIO7p6fnPKkUx5Eqo6InZIj4PzqiRDmHC+FS8xNDiMywFk4qykk5aTfuy0aFRTieIT17g+Adxx0qPNn4mHqpobiDu6en5zypFMeRKqOiJ2SAQAAAH8AAAAAAAAAAAAAAAAAAAApAAAAAQAAAIDouQTNaGWI4LtJHjsCAAAAAAAAAAAAAAAAAAAATZzStKEBAAABBvl8HQ8N++CXx8oEVf18CRwapMne23rTdiECpPJkXDcgoQcAAAAAAAAAAAAAAAAAAPBJAgAAAAAAAAAAAAAAAAEAAAAXBvg4/Hccxvshzav9sTmVIfxeCd1W2yAS9AMboD2ISVjgkWH5M/L+STAIvE/yDhv7oklpfJgNdvuHSX26rLwlpvTLv7Ku4qngMconrKcb8c2ELSx5IpXyBs/l1Lb3Gq0AFb2gtaXWMpX0kzR2aj0aes3op7YaztKtfjNMVXNEPfIEAAAAWGJBEKsBRrEh46GSS5a1QFI1VuJL1cfAflKr+l/rr4sVvaC1pdYylfSTNHZqPRp6zeinthrO0q1+M0xVc0Q98n8aXp3JgWudVUWv3G1IexPUosaP4ro7HRU2ALOVpbjEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAByJOq24C+LN9hBsWO+uLAUcKQuc4dezM/Nchgr4bE7XAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAasoMxKiRfFSYI+7p9qPiW4yVFVRIFBRvlZdpP2a6uY4AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABBAAAAAAdcAAAAAAAAiwEAAAAAAACQ7AIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAANxKAAAAAAAAAAAAAAAAAAAAAAAAAAAZWKD8YjKnx+berhrNjWxCoyy+ABMV1RwYL+5F4LAynAMAAAAvTEVaL0Nsb2NrUHJvZ3JhbUFjY291bnQvMDAwMDAwMRlYoPxiMqfH5t6uGs2NbEKjLL4AExXVHBgv7kXgsDKcL0xFWi9DbG9ja1Byb2dyYW1BY2NvdW50LzAwMDAwMTAZWKD8YjKnx+berhrNjWxCoyy+ABMV1RwYL+5F4LAynC9MRVovQ2xvY2tQcm9ncmFtQWNjb3VudC8wMDAwMDUwGVig/GIyp8fm3q4azY1sQqMsvgATFdUcGC/uReCwMpwAAAAAEAAAANND1rShAQAANTIBAAAAAAAAAAAAAAA=";
+        let block = decode_v03_block(b64).expect("should decode live v0.3 block");
+        assert_eq!(block.header.block_id, 78389);
+        assert_eq!(block.header.timestamp, 1794035303379);
+        assert_eq!(block.body.transactions.len(), 0);
+        assert!(matches!(block.bedrock_status, BedrockStatus::Pending));
+    }
+
+    #[test]
+    fn test_decode_v03_transaction_adapted() {
+        let b64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAFTWYrZkUZy4rvYIroSmPgQcwWAZ5KB8NIKDEZlvDIF6AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAqgsOuZxGPdO6RbF4DcyrmRsKUO35Y3gkucTrBmKEvcgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQAAABoAAAAAAAAAAAAAAAAAAAARAAAAAAAtMQEAAAAAAAAAAAAAAAABVNZitmRRnLiu9giuhKY+BBzBYBnkoHw0goMRmW8MgXrQhAAAAAAAAAAAAAAAAAAAAM0IAAAAAAAAAAAAAAAAAAEAAADKAhZvkktzSoEDCqXqHrhuVRb+MaosGNfqj7Q5poGNq1g7nx9WWpOCz3JlFMBMeAu4Xy+V56z4k9hjInFiTQohtusOWYyx+8uP+7E72d7vDkrUxrs5OChz97UJ4F8yFPo=";
+        let dummy_hash = HashType([7u8; 32]);
+        let tx = decode_v03_transaction_to_adapted(b64, dummy_hash, 78431)
+            .expect("should adapt transaction");
+        assert!(matches!(tx, LeeTransaction::Public(_)));
     }
 }

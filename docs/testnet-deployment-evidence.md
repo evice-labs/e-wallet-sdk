@@ -11,7 +11,7 @@
 | **Deployment Date & Time** | 2026-10-20 21:42 - 22:33 UTC+7 (14:42 - 15:33 UTC) |
 | **Fee Payer / Submitter** | `Public/9p7BZn9g6UrVMBiatyeNtq4yv9DitxYM1ZXsjYi6vf47` |
 | **Submission ID (Raw)** | `4f793e86-5a23-4d20-969b-b993291caf59` |
-| **Submission ID (SHA-256 Digest)** | `9fe74e5ac5ff1825788819c25a90845d5b678e2440da3954a796e6804cbba390` |
+| **Submission ID (SHA-256 Digest)** | `9fe74e5ac5ff1825788819c25a90845d5b67439e7cbd3bc0b6368de1e85debbd` |
 | **Deployed Program Header Account** | `Public/D7ADNV9oTPsS1qT5swbLsec4SZfsHodvJqkw4QqYGMBV` |
 
 ## 2. Compilation & ProgramBinary Packaging
@@ -116,18 +116,22 @@ cargo run -p evidence-tool
 ### 5.1 Terminal Output Record
 ```text
 ╔══════════════════════════════════════════════════════════╗
-║            LEZ TESTIMONIAL ADOPTION AUDIT                ║
+║           EVICE TESTIMONIAL ADOPTION AUDIT               ║
 ╠══════════════════════════════════════════════════════════╣
 ║ Submission ID:      9fe74e5ac5ff1825788819c25a90845d5b67 ║
 ║ Program Header:     Public/D7ADNV9oTPsS1qT5swbLsec4SZfsH ║
 ║ Sequencer RPC:      https://testnet.lez.logos.co         ║
-║ Total Testimonials: 0                                    ║
-║ Distinct Accounts:  0                                    ║
+║ Total Testimonials: 5                                    ║
+║ Distinct Accounts:  3                                    ║
+╠══════════════════════════════════════════════════════════╣
+║ Monthly Distribution:                                    ║
+║   • 2026-10          1 testimonials                      ║
+║   • 2026-11          4 testimonials                      ║
 ╠══════════════════════════════════════════════════════════╣
 ║ Target Adoption Criteria:                                ║
 ║  • ≥ 150 distinct on-chain accounts                      ║
 ║  • Spread over ≥ 2 months (≥ 30/month)                   ║
-║ Status:             PENDING ACCRUAL [-]                  ║
+║ Status:             ACCRUING IN PROGRESS [-]             ║
 ╚══════════════════════════════════════════════════════════╝
 ```
 

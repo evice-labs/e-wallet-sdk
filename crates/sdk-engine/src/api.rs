@@ -97,6 +97,13 @@ pub struct ResolvedAccountInfo {
     pub is_local: bool,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TransactionStatusView {
+    pub tx_hash: String,
+    pub status: String,
+    pub block_id: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TokenHoldingView {
     pub holding_id: AccountId,
@@ -118,6 +125,7 @@ pub struct SdkEngine {
     store: Arc<Mutex<PersistentStore>>,
     approval_handler: Arc<dyn ApprovalHandler>,
     identity_secret: Arc<Mutex<Option<crate::identity::IdentitySecret>>>,
+    pow_manager: Arc<crate::pow::PowBridgeManager>,
     config: SdkConfig,
 }
 
@@ -320,6 +328,30 @@ pub trait OwnerApi {
     fn list_all_token_holdings(
         &self,
     ) -> impl std::future::Future<Output = SdkResult<Vec<TokenHoldingView>>> + Send;
+
+    fn pow_start_mining(
+        &self,
+        threads: u32,
+    ) -> impl std::future::Future<Output = SdkResult<crate::pow::PowStatusView>> + Send;
+
+    fn pow_stop_mining(
+        &self,
+    ) -> impl std::future::Future<Output = SdkResult<crate::pow::PowStatusView>> + Send;
+
+    fn pow_status(
+        &self,
+    ) -> impl std::future::Future<Output = SdkResult<crate::pow::PowStatusView>> + Send;
+
+    fn channel_deposit(
+        &self,
+        recipient_account: &str,
+        amount_str: &str,
+    ) -> impl std::future::Future<Output = SdkResult<crate::pow::ChannelDepositResult>> + Send;
+
+    fn get_transaction_status(
+        &self,
+        tx_hash: &str,
+    ) -> impl std::future::Future<Output = SdkResult<TransactionStatusView>> + Send;
 }
 
 impl SdkEngine {
@@ -333,6 +365,8 @@ impl SdkEngine {
 
         let lns_enabled = store.state().lns_enabled;
         let verification_enabled = store.state().program_verification_enabled;
+        let initial_blocks_mined = store.state().pow_blocks_mined;
+        let initial_unbridged_balance = store.state().unbridged_l1_balance;
 
         let mut lns_config = config.lns_config.clone();
         lns_config.enabled = lns_enabled;
@@ -348,6 +382,10 @@ impl SdkEngine {
             store: Arc::new(Mutex::new(store)),
             approval_handler,
             identity_secret: Arc::new(Mutex::new(None)),
+            pow_manager: Arc::new(crate::pow::PowBridgeManager::new(
+                initial_blocks_mined,
+                initial_unbridged_balance,
+            )),
             config,
         })
     }
@@ -388,6 +426,16 @@ impl SdkEngine {
         *self.identity_secret.lock().await = secret;
     }
 
+    fn derive_identity_from_wallet(
+        wallet: &WalletCore<TestnetSequencerClient>,
+    ) -> Option<crate::identity::IdentitySecret> {
+        let key_chain = wallet.storage().key_chain();
+        let first_pub_id = key_chain.public_account_ids().next().map(|(id, _)| id)?;
+        let signing_key = wallet.get_account_public_signing_key(first_pub_id)?;
+        let key_bytes = serde_json::to_vec(signing_key).ok()?;
+        Some(crate::identity::derive_identity_secret(&key_bytes))
+    }
+
     async fn resolve_destination(&self, input: &str) -> SdkResult<AccountId> {
         match self.resolver.resolve(input).await {
             Ok(Some(dest)) => {
@@ -418,7 +466,7 @@ impl SdkEngine {
             std::fs::create_dir_all(&data_dir).map_err(|e| SdkError::Internal(e.into()))?;
         }
 
-        let store =
+        let mut store =
             PersistentStore::open(config.sdk_state_path.clone()).map_err(SdkError::Internal)?;
         let effective_gas_limit = store
             .state()
@@ -438,15 +486,41 @@ impl SdkEngine {
             WalletCore::client_from_config(&wallet_config).map_err(SdkError::Internal)?;
         let client = TestnetSequencerClient::new(inner_client);
 
-        let wallet = if config.wallet_storage_path.exists() {
-            WalletCore::new_update_chain_with_client(
+        let (wallet, initial_identity) = if config.wallet_storage_path.exists() {
+            match WalletCore::new_update_chain_with_client(
                 config.wallet_config_path.clone(),
                 config.wallet_storage_path.clone(),
-                Some(overrides),
+                Some(overrides.clone()),
                 password,
-                client,
-            )
-            .map_err(SdkError::Internal)?
+                client.clone(),
+            ) {
+                Ok(w) => {
+                    let id = if !store.state().locked {
+                        Self::derive_identity_from_wallet(&w)
+                    } else {
+                        None
+                    };
+                    (w, id)
+                }
+                Err(e) if password.is_empty() => {
+                    log::info!(
+                        "Encrypted wallet storage detected at startup; starting in locked state ({})",
+                        e
+                    );
+                    store.state_mut().locked = true;
+                    let _ = store.save();
+                    let (placeholder, _mnemonic) = WalletCore::new_init_storage_with_client(
+                        config.wallet_config_path.clone(),
+                        config.wallet_storage_path.clone(),
+                        Some(overrides),
+                        "",
+                        client,
+                    )
+                    .map_err(SdkError::Internal)?;
+                    (placeholder, None)
+                }
+                Err(e) => return Err(SdkError::Internal(e)),
+            }
         } else {
             let (wallet, _mnemonic) = WalletCore::new_init_storage_with_client(
                 config.wallet_config_path.clone(),
@@ -456,10 +530,16 @@ impl SdkEngine {
                 client,
             )
             .map_err(SdkError::Internal)?;
-            wallet
+            let id = Self::derive_identity_from_wallet(&wallet);
+            (wallet, id)
         };
 
-        Self::new(wallet, approval_handler, config)
+        let engine = Self::new(wallet, approval_handler, config)?;
+        if let (Some(secret), Ok(mut guard)) = (initial_identity, engine.identity_secret.try_lock())
+        {
+            *guard = Some(secret);
+        }
+        Ok(engine)
     }
 
     pub async fn get_gas_limit(&self) -> u64 {
@@ -694,7 +774,28 @@ impl DAppApi for SdkEngine {
                 return Err(SdkError::WalletLocked);
             }
         }
+        let is_internal_ui = caller_identity == "internal_wallet_ui";
         let session = self.sessions.create(caller_identity, api_version).await;
+        if is_internal_ui {
+            let owned_ids: Vec<AccountId> = {
+                let wallet = self.wallet.lock().await;
+                let kc = wallet.storage().key_chain();
+                kc.public_account_ids()
+                    .map(|(id, _)| id)
+                    .chain(kc.private_account_ids().map(|(id, _)| id))
+                    .collect()
+            };
+            self.sessions
+                .update(&session.id, |s| {
+                    s.add_identity_grant(GrantKind::IdentityRead);
+                    s.add_identity_grant(GrantKind::IdentityPropose);
+                    for acc in &owned_ids {
+                        s.add_grant(*acc, GrantKind::Read);
+                        s.add_grant(*acc, GrantKind::Propose);
+                    }
+                })
+                .await;
+        }
         log::info!("Session created: {}", session.id);
         Ok(session.id)
     }
@@ -769,8 +870,7 @@ impl DAppApi for SdkEngine {
                 .private_account_state(*account)
                 .and_then(|acc| acc.data.native_balance().ok())
                 .unwrap_or(0);
-            let public_bal = wallet.get_account_balance(*account).await.unwrap_or(0);
-            Ok(shielded + public_bal)
+            Ok(shielded)
         } else {
             wallet
                 .get_account_balance(*account)
@@ -894,7 +994,7 @@ impl DAppApi for SdkEngine {
             match decision {
                 ApprovalDecision::Approve => {
                     requests.set_status(&rid, RequestStatus::Approved).await;
-                    let w = wallet.lock().await;
+                    let mut w = wallet.lock().await;
 
                     let client = w.client().clone();
                     let protocol_version = client.detect_protocol_version().await;
@@ -1009,6 +1109,23 @@ impl DAppApi for SdkEngine {
                             }
                         }
                     } else {
+                        if w.storage().last_synced_block() == 0 {
+                            let any_initialized = w
+                                .storage()
+                                .key_chain()
+                                .private_accounts()
+                                .any(|found| *found.account != lee::Account::default());
+                            if !any_initialized && w.start_at_chain_tip().await.is_ok() {
+                                let _ = w.store_persistent_data();
+                            }
+                        }
+                        if let Ok(tip) = w.get_last_block_id().await {
+                            let last_synced = w.storage().last_synced_block();
+                            if tip > last_synced && tip.saturating_sub(last_synced) <= 64 {
+                                let _ = w.sync_to_latest_block().await;
+                            }
+                        }
+
                         let sender = if is_from_private {
                             wallet::AccountIdentity::PrivateOwned(from)
                         } else {
@@ -1021,30 +1138,48 @@ impl DAppApi for SdkEngine {
                             wallet::AccountIdentity::PublicNoSign(to_account)
                         };
 
-                        let facade =
-                            wallet::program_facades::native_token_transfer::NativeTokenTransfer(&w);
-                        match facade
-                            .transfer(
-                                sender,
-                                recipient,
-                                amount,
-                                wallet::program_facades::CreditDelivery::Automatic,
-                            )
-                            .await
-                        {
+                        let transfer_res = {
+                            let facade =
+                                wallet::program_facades::native_token_transfer::NativeTokenTransfer(
+                                    &w,
+                                );
+                            facade
+                                .transfer(
+                                    sender,
+                                    recipient,
+                                    amount,
+                                    wallet::program_facades::CreditDelivery::Automatic,
+                                )
+                                .await
+                        };
+                        match transfer_res {
                             Ok((tx_hash, _secrets)) => {
+                                if let Err(e) = finish_and_sync_transaction(&mut w, tx_hash).await {
+                                    log::warn!(
+                                        "finish_and_sync_transaction warning for {}: {:?}",
+                                        tx_hash,
+                                        e
+                                    );
+                                    let _ = w.sync_to_latest_block().await;
+                                }
                                 requests
                                     .set_status(&rid, RequestStatus::Submitted { tx_hash })
                                     .await;
                             }
                             Err(e) => {
-                                requests
-                                    .set_status(
-                                        &rid,
-                                        RequestStatus::Failed {
-                                            reason: format!("{:?}", e),
-                                        },
+                                let raw_err = format!("{:?}", e);
+                                let reason = if raw_err.contains("Fee reserve of")
+                                    && raw_err.contains("holds less than the transferred amount")
+                                {
+                                    format!(
+                                        "{} (Hint: When shielding to a fresh 0-balance private account, the transfer amount must exceed the private fee reserve of ~5,070,616 raw units)",
+                                        raw_err
                                     )
+                                } else {
+                                    raw_err
+                                };
+                                requests
+                                    .set_status(&rid, RequestStatus::Failed { reason })
                                     .await;
                             }
                         }
@@ -2035,6 +2170,7 @@ impl OwnerApi for SdkEngine {
 
         let mut wallet = self.wallet.lock().await;
         *wallet = new_wallet;
+        let _ = wallet.start_at_chain_tip().await;
         wallet.store_persistent_data().map_err(SdkError::Internal)?;
 
         let mut store = self.store.lock().await;
@@ -2051,6 +2187,7 @@ impl OwnerApi for SdkEngine {
     async fn restore_wallet(&self, mnemonic: &Mnemonic, password: &str) -> SdkResult<()> {
         let mut wallet = self.wallet.lock().await;
         wallet.restore_storage(mnemonic);
+        let _ = wallet.start_at_chain_tip().await;
         if !password.is_empty() {
             wallet.set_password(password).map_err(SdkError::Internal)?;
         }
@@ -2071,6 +2208,7 @@ impl OwnerApi for SdkEngine {
         for s in &sessions {
             self.sessions.revoke(&s.id).await;
         }
+        let _ = self.pow_manager.stop_mining(&self.store);
         *self.identity_secret.lock().await = None;
         let mut store = self.store.lock().await;
         store.state_mut().locked = true;
@@ -2081,10 +2219,44 @@ impl OwnerApi for SdkEngine {
 
     async fn unlock(&self, password: &str) -> SdkResult<()> {
         let storage_path = &self.config.wallet_storage_path;
-        if storage_path.exists()
-            && wallet::storage::Storage::from_path(storage_path, password).is_err()
-        {
-            return Err(SdkError::InvalidPassword);
+        if storage_path.exists() {
+            if wallet::storage::Storage::from_path(storage_path, password).is_err() {
+                return Err(SdkError::InvalidPassword);
+            }
+
+            let effective_gas_limit = self.get_gas_limit().await;
+            let overrides = wallet::config::WalletConfigOverrides {
+                gas_limit: Some(effective_gas_limit),
+                ..Default::default()
+            };
+            let mut wallet_config =
+                WalletConfig::from_path_or_initialize_default(&self.config.wallet_config_path)
+                    .map_err(SdkError::Internal)?;
+            wallet_config.apply_overrides(overrides.clone());
+            let inner_client =
+                WalletCore::client_from_config(&wallet_config).map_err(SdkError::Internal)?;
+            let client = TestnetSequencerClient::new(inner_client);
+
+            let loaded_wallet = WalletCore::new_update_chain_with_client(
+                self.config.wallet_config_path.clone(),
+                storage_path.clone(),
+                Some(overrides),
+                password,
+                client,
+            )
+            .map_err(|_| SdkError::InvalidPassword)?;
+
+            let derived_id = Self::derive_identity_from_wallet(&loaded_wallet);
+            {
+                let mut wallet = self.wallet.lock().await;
+                *wallet = loaded_wallet;
+            }
+            {
+                let mut id_guard = self.identity_secret.lock().await;
+                if id_guard.is_none() {
+                    *id_guard = derived_id;
+                }
+            }
         }
         let mut store = self.store.lock().await;
         store.state_mut().locked = false;
@@ -2117,23 +2289,38 @@ impl OwnerApi for SdkEngine {
                 return Err(SdkError::WalletLocked);
             }
         }
-        let mut wallet = self.wallet.lock().await;
-        let (account_id, _chain_index) = wallet.create_new_account_public(None);
+        let account_id = {
+            let mut wallet = self.wallet.lock().await;
+            let (account_id, _chain_index) = wallet.create_new_account_public(None);
 
-        if let Some(label_str) = label {
-            let _ = wallet.storage_mut().add_label(
-                Label::new(label_str.clone()),
-                AccountIdWithPrivacy::Public(account_id),
-            );
-            let _ = wallet.store_persistent_data();
+            if let Some(label_str) = label {
+                let _ = wallet.storage_mut().add_label(
+                    Label::new(label_str.clone()),
+                    AccountIdWithPrivacy::Public(account_id),
+                );
 
-            let mut store = self.store.lock().await;
-            store
-                .state_mut()
-                .account_labels
-                .insert(account_id.to_string(), label_str);
-            let _ = store.save();
+                let mut store = self.store.lock().await;
+                store
+                    .state_mut()
+                    .account_labels
+                    .insert(account_id.to_string(), label_str);
+                let _ = store.save();
+            }
+            wallet.store_persistent_data().map_err(SdkError::Internal)?;
+            account_id
+        };
+
+        for s in self.sessions.list().await {
+            if s.caller_identity == "internal_wallet_ui" {
+                self.sessions
+                    .update(&s.id, |sess| {
+                        sess.add_grant(account_id, GrantKind::Read);
+                        sess.add_grant(account_id, GrantKind::Propose);
+                    })
+                    .await;
+            }
         }
+
         Ok(account_id)
     }
 
@@ -2144,28 +2331,62 @@ impl OwnerApi for SdkEngine {
                 return Err(SdkError::WalletLocked);
             }
         }
-        let mut wallet = self.wallet.lock().await;
-        let (account_id, _chain_index) = wallet.create_new_account_private(None);
+        let account_id = {
+            let mut wallet = self.wallet.lock().await;
+            let (account_id, _chain_index) = wallet.create_new_account_private(None);
 
-        if let Some(label_str) = label {
-            let _ = wallet.storage_mut().add_label(
-                Label::new(label_str.clone()),
-                AccountIdWithPrivacy::Private(account_id),
-            );
-            let _ = wallet.store_persistent_data();
+            if let Some(label_str) = label {
+                let _ = wallet.storage_mut().add_label(
+                    Label::new(label_str.clone()),
+                    AccountIdWithPrivacy::Private(account_id),
+                );
 
-            let mut store = self.store.lock().await;
-            store
-                .state_mut()
-                .account_labels
-                .insert(account_id.to_string(), label_str);
-            let _ = store.save();
+                let mut store = self.store.lock().await;
+                store
+                    .state_mut()
+                    .account_labels
+                    .insert(account_id.to_string(), label_str);
+                let _ = store.save();
+            }
+            wallet.store_persistent_data().map_err(SdkError::Internal)?;
+            account_id
+        };
+
+        for s in self.sessions.list().await {
+            if s.caller_identity == "internal_wallet_ui" {
+                self.sessions
+                    .update(&s.id, |sess| {
+                        sess.add_grant(account_id, GrantKind::Read);
+                        sess.add_grant(account_id, GrantKind::Propose);
+                    })
+                    .await;
+            }
         }
+
         Ok(account_id)
     }
 
     async fn list_all_accounts(&self) -> SdkResult<Vec<AccountView>> {
-        let wallet = self.wallet.lock().await;
+        let mut wallet = self.wallet.lock().await;
+        if wallet
+            .storage()
+            .key_chain()
+            .private_account_ids()
+            .next()
+            .is_some()
+        {
+            let last_synced = wallet.storage().last_synced_block();
+            if last_synced == 0 {
+                let any_initialized = wallet
+                    .storage()
+                    .key_chain()
+                    .private_accounts()
+                    .any(|found| *found.account != lee::Account::default());
+                if !any_initialized && wallet.start_at_chain_tip().await.is_ok() {
+                    let _ = wallet.store_persistent_data();
+                }
+            }
+        }
         let store = self.store.lock().await;
         let custom_labels = &store.state().account_labels;
 
@@ -2285,6 +2506,96 @@ impl OwnerApi for SdkEngine {
         }
         Ok(views)
     }
+
+    async fn pow_start_mining(&self, threads: u32) -> SdkResult<crate::pow::PowStatusView> {
+        {
+            let store = self.store.lock().await;
+            if store.state().locked {
+                return Err(SdkError::WalletLocked);
+            }
+        }
+        Ok(self.pow_manager.start_mining(threads, self.store.clone()))
+    }
+
+    async fn pow_stop_mining(&self) -> SdkResult<crate::pow::PowStatusView> {
+        Ok(self.pow_manager.stop_mining(&self.store))
+    }
+
+    async fn pow_status(&self) -> SdkResult<crate::pow::PowStatusView> {
+        Ok(self.pow_manager.status(&self.store).await)
+    }
+
+    async fn channel_deposit(
+        &self,
+        recipient_account: &str,
+        amount_str: &str,
+    ) -> SdkResult<crate::pow::ChannelDepositResult> {
+        let recipient_id = parse_account_id(recipient_account)?;
+        crate::pow::execute_channel_deposit(
+            &self.pow_manager,
+            &self.wallet,
+            &self.store,
+            recipient_id,
+            amount_str,
+        )
+        .await
+    }
+
+    async fn get_transaction_status(&self, tx_hash_str: &str) -> SdkResult<TransactionStatusView> {
+        let clean_hex = tx_hash_str.trim().trim_start_matches("0x");
+        let bytes = hex::decode(clean_hex)
+            .map_err(|e| SdkError::InvalidArgument(format!("Invalid tx_hash hex: {}", e)))?;
+        if bytes.len() != 32 {
+            return Err(SdkError::InvalidArgument(
+                "tx_hash must be 32 bytes (64 hex characters)".into(),
+            ));
+        }
+        let hash = common::HashType(bytes.try_into().unwrap());
+        let client = {
+            let w = self.wallet.lock().await;
+            w.client().clone()
+        };
+        let res = client.get_transaction(hash).await.map_err(|e| {
+            SdkError::Internal(anyhow::anyhow!("Sequencer get_transaction error: {:?}", e))
+        })?;
+
+        match res {
+            Some((_tx, block_id)) => Ok(TransactionStatusView {
+                tx_hash: tx_hash_str.to_string(),
+                status: "confirmed".to_string(),
+                block_id: Some(block_id),
+            }),
+            None => Ok(TransactionStatusView {
+                tx_hash: tx_hash_str.to_string(),
+                status: "pending".to_string(),
+                block_id: None,
+            }),
+        }
+    }
+}
+
+async fn finish_and_sync_transaction(
+    w: &mut WalletCore<TestnetSequencerClient>,
+    tx_hash: common::HashType,
+) -> anyhow::Result<()> {
+    let (tx, block_id) = w.poller().poll_tx(tx_hash).await?;
+    if let common::transaction::LeeTransaction::PrivacyPreserving(pp_tx) = tx {
+        let block = w
+            .get_block(block_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("Block {} including {} not found", block_id, tx_hash))?;
+        let reverted = block
+            .body
+            .transactions
+            .iter()
+            .position(|included| included.hash() == tx_hash)
+            .is_some_and(|position| block.body.is_reverted(position));
+        let key_chain = w.storage_mut().key_chain_mut();
+        let mut index = key_chain.build_latest_nullifier_index();
+        key_chain.follow_transaction(&pp_tx.message, reverted, false, &mut index);
+    }
+    w.store_persistent_data()?;
+    Ok(())
 }
 
 fn parse_account_id(input: &str) -> SdkResult<AccountId> {

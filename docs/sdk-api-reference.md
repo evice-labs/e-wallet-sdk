@@ -109,17 +109,30 @@ Returns accounts authorized for the given session.
 - **FFI Signatures:**
   - `lez_wallet_request_accounts(engine: *mut FfiSdkEngine, session_id: *const c_char) -> *mut c_char`
   - `lez_wallet_list_accounts(engine: *mut FfiSdkEngine, session_id: *const c_char) -> *mut c_char`
-- **Privilege Required:** Requires at least one active grant for the account.
-- **Response Format:**
+  - `lez_wallet_list_all_accounts(engine: *mut FfiSdkEngine) -> *mut c_char` *(Privileged Owner API)*
+- **Privilege Required:** `request_accounts` & `list_accounts` require active session grants. `list_all_accounts` is an owner call querying all derived accounts.
+- **Response Format (AccountViewDto):**
 ```json
 {
   "ok": true,
   "accounts": [
     {
       "account_id": "44KVvzvh2ephQU9aR5snboGUXKgS1FnPYh1W4KZKwmhm",
+      "canonical_address": "Public/44KVvzvh2ephQU9aR5snboGUXKgS1FnPYh1W4KZKwmhm",
       "privacy": "public",
+      "is_private": false,
       "label": "Primary Treasury",
-      "balance": 10000000000
+      "balance": "10000000000",
+      "formatted_balance": "10,000,000,000.00"
+    },
+    {
+      "account_id": "87MNwzvh2ephQU9aR5snboGUXKgS1FnPYh1W4KZKzxyz",
+      "canonical_address": "Private/87MNwzvh2ephQU9aR5snboGUXKgS1FnPYh1W4KZKzxyz",
+      "privacy": "private",
+      "is_private": true,
+      "label": "Shielded Vault",
+      "balance": "5000000000",
+      "formatted_balance": "5,000,000,000.00"
     }
   ]
 }
@@ -129,9 +142,9 @@ Returns accounts authorized for the given session.
 Fetches the balance of an authorized account in native atomic units.
 - **FFI Signature:** `lez_wallet_get_balance(engine: *mut FfiSdkEngine, session_id: *const c_char, account_id: *const c_char) -> *mut c_char`
 - **Privilege Required:** `GrantKind::Read`.
-- **Factual Aggregation Semantics:**
+- **Factual Balance Semantics:**
   - For **Transparent/Public** accounts: Queries live sequencer account state and returns on-chain native balance.
-  - For **Private/Shielded** accounts: Factual unified balance combining both zero-knowledge circuit private pool (`shielded`) and transparent pool balance (`public_bal`) if funds were received at the account's transparent address (`shielded + public_bal`).
+  - For **Private/Shielded** accounts: Factual shielded balance representing zero-knowledge circuit note commitments decryptable by the account's viewing key.
 - **Response Format:**
 ```json
 {
@@ -316,6 +329,10 @@ Privileged interface restricted to the wallet owner / host environment:
 | `lez_wallet_grant_account(engine, session_id, account_id, grant_kind)` | Issues an explicit privilege grant to an active dApp session. | `grant_kind`: `"read"` or `"propose"`. |
 | `lez_wallet_revoke_session(engine, session_id)` | Immediately revokes an authorized session and all its grants. | `session_id`: Target session identifier. |
 | `lez_wallet_set_account_label(engine, account_id, label)` | Renames or sets a human-readable alias on an account, persisting it atomically to override old aliases. | `account_id`: Target account; `label`: New alias string. |
+| `lez_wallet_pow_start_mining(engine)` | Starts the EmPoWer Proof-of-Work mining daemon and L1 auto-claim (`PUT /pow/mining/start`, `PUT /pow/auto-claim/start`) alongside the local SHA-256 PoW worker. | None. |
+| `lez_wallet_pow_stop_mining(engine)` | Stops the EmPoWer Proof-of-Work mining daemon (`PUT /pow/mining/stop`) and halts the local SHA-256 PoW worker. | None. |
+| `lez_wallet_pow_status(engine)` | Queries live EmPoWer mining telemetry (`GET /pow/status`, `GET /pow/rewards/claimable`) and persistent unbridged L1 reward balance (`unbridged_l1_balance`). | None. |
+| `lez_wallet_channel_deposit(engine, recipient_account, amount_str)` | Bridges unbridged L1 PoW rewards to a **Transparent/Public** LEZ account via L1 `/pow/claim` + `/channel/deposit` (`bridge_core::DepositMetadata`) and on-chain LEZ settlement. Enforces the Asymmetric Deposit Trap guardrail (rejects `Private` destinations). | `recipient_account`: Destination Public AccountId; `amount_str`: Raw atomic units string. |
 
 ### 4.1 Vault Passphrase Rotation (`change_password`)
 Allows the wallet owner to change the master encryption passphrase protecting local keystore storage:

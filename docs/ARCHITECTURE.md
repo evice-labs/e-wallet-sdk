@@ -1,4 +1,4 @@
-# System Architecture & Technical Specification
+## System Architecture & Technical Specification
 
 > **Evice Wallet & Provider SDK for Logos Execution Zone**  
 > Modular, headless Wallet Engine and dApp Provider SDK for the Logos Execution Zone (LEZ).  
@@ -53,8 +53,8 @@ lez-wallet-sdk/
 
 | Component | Responsibility | Public Interface | Key Dependencies |
 |---|---|---|---|
-| **`sdk-engine`** | Central orchestrator, session/grant store, transaction pipeline, decoders, effect simulations, LNS resolver, identity accountability (HKDF, BIP-340 Schnorr, Two-Tier SSS), atomic persistence, and token facade. | `DAppApi`, `OwnerApi`, `SdkEngine`, `ApprovalHandler` | `wallet`, `lee`, `common`, `tokio`, `argon2`, `sha2`, `k256`, `sharks` |
-| **`sdk-ffi`** | Exposes C-ABI (`extern "C"`) functions with opaque handles, JSON serialization, and non-blocking approval callback bridge for Logos Basecamp desktop plugins (`wallet-provider`). | `lez_wallet_engine_new()`, `lez_wallet_engine_free()`, `lez_wallet_set_approval_callback()`, `OwnerApi`, `DAppApi`, Identity Accountability, and `include/lez_wallet_sdk.h` | `sdk-engine`, `serde_json`, `cbindgen`, `dashmap`, `tokio` |
+| **`sdk-engine`** | Central orchestrator, session/grant store, transaction pipeline, decoders, effect simulations, LNS resolver, identity accountability (HKDF, BIP-340 Schnorr, Two-Tier SSS), EmPoWer PoW mining & L1-to-LEZ channel bridge (`pow.rs`), atomic persistence, and token facade. | `DAppApi`, `OwnerApi`, `SdkEngine`, `PowBridgeManager`, `ApprovalHandler` | `wallet`, `lee`, `common`, `tokio`, `argon2`, `sha2`, `k256`, `sharks` |
+| **`sdk-ffi`** | Exposes C-ABI (`extern "C"`) functions with opaque handles, JSON serialization, and non-blocking approval callback bridge for Logos Basecamp desktop plugins (`wallet-provider`). | `lez_wallet_engine_new()`, `lez_wallet_engine_free()`, `lez_wallet_set_approval_callback()`, `OwnerApi`, `DAppApi`, Identity Accountability, EmPoWer PoW & Channel Bridge, and `include/lez_wallet_sdk.h` | `sdk-engine`, `serde_json`, `cbindgen`, `dashmap`, `tokio` |
 | **`cli`** | Interactive command-line binary (`evice-wallet`) for headless operations, scripting, local testing, and offline address resolution. | Command-line interface via `clap` | `sdk-engine`, `tokio`, `clap`, `env_logger` |
 | **`testimonial-program`** | On-chain RISC-V zkVM smart contract storing testimonials and binding `SUBMISSION_ID` to submitter PDA records. | Program header ID, instruction calldata ABI | `lee`, `lee_core`, `common`, `serde`, `borsh` |
 | **`tools/dispatcher`** | Headless CLI tool (`lez-dispatcher`) for uploading program bytecode via `ProgramLoader`, sending on-chain transactions, and syncing `deployments.json`. | Command-line interface via `clap` | `wallet`, `program_loader_core`, `testimonial-program`, `serde_json` |
@@ -133,15 +133,19 @@ The central engine is encapsulated by `SdkEngine`, maintaining an `Arc`-wrapped,
 // Trait exposed to external, untrusted dApps (consumed via Session)
 pub trait DAppApi {
     fn sdk_info(&self) -> Future<Output = SdkResult<SdkInfo>>;
-    fn connect(&self, module_id: &str) -> Future<Output = SdkResult<SessionId>>;
+    fn connect(&self, caller_identity: String, api_version: u32) -> Future<Output = SdkResult<SessionId>>;
     fn disconnect(&self, session: &SessionId) -> Future<Output = SdkResult<()>>;
-    fn request_accounts(&self, session: &SessionId, accounts: Vec<AccountId>, kind: GrantKind) -> Future<Output = SdkResult<()>>;
+    fn request_accounts(&self, session: &SessionId) -> Future<Output = SdkResult<Vec<AccountView>>>;
     fn list_accounts(&self, session: &SessionId) -> Future<Output = SdkResult<Vec<AccountView>>>;
     fn get_balance(&self, session: &SessionId, account: &AccountId) -> Future<Output = SdkResult<u128>>;
-    fn propose_native_transfer(&self, session: &SessionId, from: AccountId, to: AccountId, amount: u128) -> Future<Output = SdkResult<RequestId>>;
-    fn get_request_status(&self, session: &SessionId, request_id: &RequestId) -> Future<Output = SdkResult<RequestStatus>>;
-    fn cancel_request(&self, session: &SessionId, request_id: &RequestId) -> Future<Output = SdkResult<()>>;
-    fn resolve_name(&self, name: &str) -> Future<Output = SdkResult<Option<AccountId>>>;
+    fn propose_native_transfer(&self, session: &SessionId, from: AccountId, to: String, amount: u128, from_privacy: Option<AccountPrivacy>) -> Future<Output = SdkResult<RequestId>>;
+    fn propose_token_transfer(&self, session: &SessionId, from_holding: AccountId, to_holding: AccountId, definition: AccountId, amount: u128) -> Future<Output = SdkResult<RequestId>>;
+    fn propose_transaction(&self, session: &SessionId, mentions: Vec<AccountId>, calldata: Vec<u8>, description: Option<String>) -> Future<Output = SdkResult<RequestId>>;
+    fn propose_contract_call(&self, session: &SessionId, program_id: AccountId, payer_id: AccountId, mentions: Vec<AccountId>, calldata: Vec<u8>, description: Option<String>) -> Future<Output = SdkResult<RequestId>>;
+    fn list_token_holdings(&self, session: &SessionId) -> Future<Output = SdkResult<Vec<TokenHoldingView>>>;
+    fn get_request_status(&self, request_id: &RequestId) -> Future<Output = SdkResult<RequestStatus>>;
+    fn cancel_request(&self, request_id: &RequestId) -> Future<Output = SdkResult<()>>;
+    fn resolve_name(&self, session: &SessionId, name: &str) -> Future<Output = SdkResult<ResolvedDestination>>;
 
     // Identity Accountability & Accountable Pseudonymity
     fn request_identity_access(&self, session: &SessionId, kind: GrantKind) -> Future<Output = SdkResult<()>>;
@@ -161,9 +165,14 @@ pub trait OwnerApi {
     fn create_account_public(&self, label: Option<String>) -> Future<Output = SdkResult<AccountId>>;
     fn create_account_private(&self, label: Option<String>) -> Future<Output = SdkResult<AccountId>>;
     fn list_all_accounts(&self) -> Future<Output = SdkResult<Vec<AccountView>>>;
-    fn set_account_label(&self, account_id: &AccountId, label: String) -> Future<Output = SdkResult<()>>;
     fn list_sessions(&self) -> Future<Output = SdkResult<Vec<Session>>>;
     fn revoke_session(&self, session_id: &SessionId) -> Future<Output = SdkResult<()>>;
+    fn register_token_holding(&self, holding_id: AccountId, definition_id: AccountId, symbol: String, name: String, is_shielded: bool) -> Future<Output = SdkResult<()>>;
+    fn list_all_token_holdings(&self) -> Future<Output = SdkResult<Vec<TokenHoldingView>>>;
+    fn pow_start_mining(&self, threads: u32) -> Future<Output = SdkResult<PowStatusView>>;
+    fn pow_stop_mining(&self) -> Future<Output = SdkResult<PowStatusView>>;
+    fn pow_status(&self) -> Future<Output = SdkResult<PowStatusView>>;
+    fn channel_deposit(&self, recipient_account: &str, amount_str: &str) -> Future<Output = SdkResult<ChannelDepositResult>>;
 }
 ```
 
@@ -471,6 +480,8 @@ To ensure seamless, resilient interoperation between modern SDK engine traits an
    - `WalletCore` is generic over `C: WalletSequencerClient`, allowing `SdkEngine` to inject this adaptor via `WalletCore::new_update_chain_with_client` and `WalletCore::new_init_storage_with_client`.
 2. **Backward-Compatible RPC Payloads:**
    - **Account Serialization (`shards` vs `actor_states`):** Sequencer testnets returning account payloads with the `shards` field are normalized dynamically to `actor_states` at the JSON level before passing to `Account` deserialization, avoiding `unknown field 'shards', expected 'actor_states'` deserialization rejections.
+   - **Block & Block Range Wire Adaptation (`getBlock` & `getBlockRange`):** Sequencers speaking the LEZ v0.3 protocol (`V03ShardModel`, such as `https://testnet.lez.logos.co`) return base64-encoded v0.3 `Block` Borsh bytes that do not contain the modern v0.4 `reverted: Vec<u64>` field or Actor-model transactions. `TestnetSequencerClient` intercepts block queries and decodes them via `v03_compat::decode_v03_block`, extracting canonical header parameters (`block_id`, `prev_block_hash`, `hash`, `timestamp`, `bedrock_status`) and mapping them into the wallet poller structures without length mismatch crashes (`Unexpected length of input at line 1 column 1484`).
+   - **Missing Method Resilience (`getPublications` & `getRecoveryBinding`):** Gracefully returns empty collections / `None` on v0.3 sequencers where these modern Actor-model RPC methods do not exist (HTTP error `-32601 Method not found`).
    - **Proof Query Tuple Compatibility (`getProofsAndRoot`):** Adapts both legacy 2-tuple `(proofs, root)` and 3-tuple `(proofs, message_paths, root)` return signatures from sequencer RPC calls into canonical proof structures.
 3. **Pure Upstream Commit Pinning:**
    - All external LEZ dependencies in `Cargo.toml` are pinned to explicit Git commits (`rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142"`) with zero local directory patches or workspace overrides.
@@ -482,11 +493,40 @@ To ensure safe operation across different LEZ network iterations and protect use
    - Public accounts are derived from ECDSA/Schnorr public keys and authenticate via cryptographic signatures.
    - Private accounts are derived from post-quantum ML-KEM-768 viewing keys and BabyJubjub/Poseidon nullifier keys, authenticated exclusively through Zero-Knowledge SNARK proofs.
    - Private accounts possess no ECDSA signing keys, rendering any transparent balance on their public shard permanently unspendable and unshieldable (*Asymmetric Deposit Trap*).
-2. **Shielding & Private Proof Execution:**
-   - Public-to-private shielding and private note transfers are fully supported on LEZ Testnet v0.3. Upstream commit `4ba9f988` (October 14, 2026) refactored private witness execution, resolving earlier `WitnessNotInRoot` client artifacts and enabling native shielded transfers across updated toolchains.
+2. **Shielding & 4-Way Private Proof Execution:**
+   - Public-to-private shielding (`Public ➝ Private`), private-to-private (`Private ➝ Private`), and unshielding (`Private ➝ Public`) execute as `PrivacyPreserving` ZK transactions (`send_priv_tx_native_transfer`).
+   - In `Public ➝ Private` transfers, the ZK circuit deducts the fee reserve (`~5,070,616` raw units at default `gas_limit = 34,000`) from the recipient's newly minted private note output, allowing even a brand-new Private account with `0` initial balance to receive tokens as long as the transfer amount exceeds the fee reserve (`> 5,070,616` raw units).
+   - `propose_native_transfer` honors explicit `Public/` and `Private/` prefixes via `from_privacy: Option<AccountPrivacy>` and validates destination prefixes so `Public ➝ Private` is never misrouted into a transparent transfer.
 3. **Downstream Safety Guardrails:**
-   - The SDK Engine and consumer modules implement pre-flight validation guards to prevent users from executing invalid self-shielding or unspendable transparent deposits to private accounts on v0.3 networks.
+   - The SDK Engine and consumer modules implement pre-flight validation guards to prevent users from executing invalid self-shielding or unspendable transparent deposits to private accounts.
    - For complete formal analysis, refer to [protocol-compatibility-and-invariants.md](protocol-compatibility-and-invariants.md).
+
+### 4.16 EmPoWer Proof-of-Work Mining & L1 ➝ LEZ Channel Bridge (`pow.rs`)
+
+Because Logos Basecamp executes `ui_qml` plugins inside a strict zero-network sandbox and because Proof-of-Work (EmPoWer) is by cryptographic design a client-side CPU puzzle rather than a centralized remote faucet, `sdk-engine` implements `PowBridgeManager` directly in the Rust seed layer:
+
+1. **Dual-Mode Local PoW & L1 Bedrock Node Synchronization:**
+   - **Embedded Native Rust PoW Engine (Default Standalone Mode):** Executes a multi-threaded SHA-256 Proof-of-Work hashing loop locally inside `sdk-engine` (`logos/empower/pow/v1/`), crediting `10,000,000` raw units (`MINED_BLOCK_REWARD_UNITS`) per solved ticket into `SdkPersistentState::unbridged_l1_balance` (persisted atomically to `sdk_state.json`).
+   - **Optional External L1 Node Sync (`LOGOS_L1_NODE_URL`, default `http://127.0.0.1:8080`):** When a local `logos-blockchain-node` (L1 Bedrock node) is running on the workstation, `PowBridgeManager` automatically dispatches authentic L1 REST calls (`PUT /pow/mining/start`, `PUT /pow/auto-claim/start`, `PUT /pow/mining/stop`, `GET /pow/status`, `GET /pow/rewards/claimable`, `POST /pow/claim`, and `POST /channel/deposit`).
+2. **L1 ➝ LEZ Channel Deposit & On-Chain Settlement (`execute_channel_deposit`):**
+   - Encodes canonical Borsh `DepositMetadata` (`DepositRecipient::Identified(PublicAccountEvidence::Key(pubkey))`, 34 bytes) matching `logos-execution-zone/crates/bridge-core`.
+   - Enforces the **Asymmetric Deposit Trap Guardrail**: rejects any attempt to bridge transparent L1 tokens directly into a `Private` account.
+   - Dispatches an on-chain LEZ settlement transaction (`V03ShardModel` and `V04ActorModel` compatible) to the active LEZ sequencer (`https://testnet.lez.logos.co` or `http://127.0.0.1:3040`), waits for block confirmation via `wallet.poller().poll_tx`, and deducts the bridged balance from `unbridged_l1_balance`.
+
+### 4.17 Zero-Knowledge Prover Worker Daemon (`prover_daemon`, `lez-prover-daemon`)
+
+To guarantee smooth, non-blocking desktop UX on resource-constrained hardware (e.g. dual-core client laptops) and prevent Logos Basecamp IPC timeouts (`callRemoteMethod timed out after 20000ms`), `sdk-engine` implements a decoupled Zero-Knowledge Proving Worker Daemon:
+
+1. **Decoupled Wallet Lock Lifecycle:**
+   - Pre-flight witness extraction requires immutable wallet inspection for $< 10\text{ ms}$.
+   - Once input parameters are prepared, the exclusive `WalletCore` lock is immediately released. Read calls (`listAllAccounts`, `getBalance`) complete with $< 5\text{ ms}$ latency while proving proceeds.
+2. **Cooperative Pacing & Resource Bounds:**
+   - Dedicated worker loop with bounded concurrency (`max_concurrency = 1` by default) prevents CPU thrashing and thermal throttling on dual-core machines.
+   - Cooperative yields (`tokio::task::yield_now()`) ensure the host system and UI thread remain responsive.
+3. **Multi-Protocol IPC Daemon (`ProverIpcServer`):**
+   - Communicates via Unix Domain Socket (`/tmp/lez_prover.sock`) with structured line-delimited JSON RPC (`ping`, `status`, `submit`, `query`, `cancel`, `shutdown`).
+   - Exposes real-time multi-stage progress telemetry (`Simulating`, `Proving Segment 1/2`, `Recursive STARK Fold`, `Completed`).
+   - Standalone CLI entrypoint (`lez-prover-daemon`) enables running as an independent OS service or background daemon.
 
 ## 5. Security & Privacy Model
 
