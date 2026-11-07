@@ -632,7 +632,11 @@ pub mod prover_daemon {
 
         async fn process_payload(&self, payload: ProvingJobPayload) {
             let jid = payload.job_id.clone();
-            if self.jobs.get(&jid).is_some_and(|status| *status == ProverJobStatus::Cancelled) {
+            if self
+                .jobs
+                .get(&jid)
+                .is_some_and(|status| *status == ProverJobStatus::Cancelled)
+            {
                 return;
             }
 
@@ -652,7 +656,11 @@ pub mod prover_daemon {
             // Stage 2: Segment proving with progress tracking
             let total_segments = 2;
             for seg in 1..=total_segments {
-                if self.jobs.get(&jid).is_some_and(|status| *status == ProverJobStatus::Cancelled) {
+                if self
+                    .jobs
+                    .get(&jid)
+                    .is_some_and(|status| *status == ProverJobStatus::Cancelled)
+                {
                     self.active_workers.fetch_sub(1, Ordering::SeqCst);
                     return;
                 }
@@ -975,5 +983,3 @@ pub mod prover_daemon {
         });
     }
 }
-
-

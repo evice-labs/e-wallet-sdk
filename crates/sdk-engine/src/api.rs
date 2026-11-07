@@ -535,7 +535,8 @@ impl SdkEngine {
         };
 
         let engine = Self::new(wallet, approval_handler, config)?;
-        if let (Some(secret), Ok(mut guard)) = (initial_identity, engine.identity_secret.try_lock()) {
+        if let (Some(secret), Ok(mut guard)) = (initial_identity, engine.identity_secret.try_lock())
+        {
             *guard = Some(secret);
         }
         Ok(engine)
@@ -2554,10 +2555,9 @@ impl OwnerApi for SdkEngine {
             let w = self.wallet.lock().await;
             w.client().clone()
         };
-        let res = client
-            .get_transaction(hash)
-            .await
-            .map_err(|e| SdkError::Internal(anyhow::anyhow!("Sequencer get_transaction error: {:?}", e)))?;
+        let res = client.get_transaction(hash).await.map_err(|e| {
+            SdkError::Internal(anyhow::anyhow!("Sequencer get_transaction error: {:?}", e))
+        })?;
 
         match res {
             Some((_tx, block_id)) => Ok(TransactionStatusView {
