@@ -7,6 +7,7 @@
 Provides the foundational wallet infrastructure, developer SDK, and integration tooling for the Logos Execution Zone (LEZ). For comprehensive technical details on the underlying engine, security models, and subsystems, refer to [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 It solves the core challenges of asset custody, dApp communication, and transaction security on LEZ:
+
 - **Full LEZ Asset & Account Management:** Unified handling of native and token-program assets across both public and private (shielded) accounts.
 - **Wallet Provider SDK:** Robust, asynchronous dApp-facing API enabling external applications to connect, request account access, read balances, and propose transactions.
 - **Informed Consent & Approval UX:** Every transaction proposal produces human-readable instruction summaries, simulated balance/state diffs, and bytecode source verification status before signing.
@@ -19,7 +20,7 @@ It solves the core challenges of asset custody, dApp communication, and transact
 The workspace is structured into specialized, decoupled crates under `crates/`:
 
 ```
-lez-wallet-sdk/
+e-wallet-sdk/
 ├── Cargo.toml                  # Workspace manifest and pinned dependencies
 ├── SUBMISSION_ID               # Unique submission identifier for on-chain testimonials
 ├── Dockerfile                  # Multi-stage container build for standalone LEZ sequencer
@@ -54,6 +55,7 @@ lez-wallet-sdk/
 ## Implemented Architecture & Features
 
 #### 1. Granular Session & Permission Management (`session.rs`)
+
 - Connections from external dApps open an isolated, ephemeral in-memory `Session`.
 - Grants are assigned per-account and per-capability with specific privileges:
   - `GrantKind::Read`: Permission to inspect balances and program states.
@@ -63,17 +65,20 @@ lez-wallet-sdk/
 - Sessions include automatic timestamped expiration (`DEFAULT_SESSION_DURATION`).
 
 #### 2. Immutable Requests & Intent Hashing (`request.rs`)
+
 - Propose calls (`proposeNativeTransfer`, `proposeTokenTransfer`, `proposeTransaction`) immediately return a `RequestId`.
 - The engine computes a deterministic 32-byte SHA-256 intent hash (`evice-wallet-sdk/intent/v1/`) binding the request ID, session ID, and serialised parameters.
 - The hash is verified before execution, eliminating Time-of-Check to Time-of-Use (TOCTOU) tampering.
 
 #### 3. Asynchronous Non-Blocking Approvals (`approval.rs`)
+
 - The pluggable `ApprovalHandler` trait allows user authorization without blocking UI or async runtimes:
   - `CliApprovalHandler`: Formatted terminal modal prompt reading interactive user input.
   - `UiApprovalHandler`: Bridge routing prompts to Basecamp desktop QML modals.
   - `PolicyApprovalHandler`: Auto-approval policy feature-gated behind `dev-auto-approve` (audited by CI to ensure absence from release builds).
 
 #### 4. Instruction Decoders & Effect Simulation (`decode/`, `effects.rs`)
+
 - The `DecoderRegistry` automatically inspects program calldata and converts raw bytes into human-readable operations:
   - Native token transfers.
   - Token program operations (holding creation, mint, burn, transfer).
@@ -82,10 +87,12 @@ lez-wallet-sdk/
 - `EffectSimulator` pre-calculates balance changes and state mutations (`EffectSource::Simulation`), preventing blind signing.
 
 #### 5. Program Source Verification (`verifier.rs`)
+
 - Integrates source-code reproducibility verification based on reproducible smart contract registry standards.
 - Displays `VerificationStatus::Verified`, `NotVerified`, or `NotChecked` alongside compiler and source repository metadata.
 
 #### 6. Clean-Room LNS Resolver (`resolve/lns.rs`)
+
 - Full, independent implementation of [SPEC.md](https://github.com/jefdiesel/logos-names/blob/main/SPEC.md) for `.lez` domain resolution.
 - Normalises names (`[a-z0-9-]{1,32}`), derives master keys via Argon2id (64 MiB, 3 passes, salt `"logos-names/v5"`), and computes on-chain PDA account addresses (`SHA-256(pad32("/LEE/v0.2/AccountId/PDA/") || program || seed)`).
 - Live on-chain resolution via LEZ Sequencer JSON-RPC (`getAccount`), decoding Borsh `NameRecord` state and validating millisecond timestamps against 30-day grace periods.
@@ -94,6 +101,7 @@ lez-wallet-sdk/
 - User-controllable toggle (`lns_enabled`) with graceful fallback to raw 32-byte account IDs.
 
 #### 7. Resilient Storage, Passphrase Rotation & Cold-Start Encrypted Keystore (`store.rs`, `api.rs`)
+
 - Atomic persistence using write-then-rename (`.tmp` → target file) preventing state corruption during unexpected crashes or power loss.
 - Automatic `.bak` backup retention and fallback recovery.
 - Durable account alias mapping (`account_labels`) ensuring account renames overwrite prior aliases and survive restarts.
@@ -103,6 +111,7 @@ lez-wallet-sdk/
 - **Chain Tip Synchronization for Refund Sweeping:** Creating or restoring wallets fast-forwards the sync cursor via `start_at_chain_tip()`, ensuring the wallet stays within `MAX_SWEEP_SCAN_BLOCKS = 64` to claim asynchronous fee refund notes automatically.
 
 #### 8. Identity Accountability & Accountable Pseudonymity (`identity/`)
+
 - Pure client-side zero-knowledge accountable pseudonymity derived from the master BIP-39 root seed (`lez/identity/v1/secret`).
 - Public identity commitments (`SHA-256("lez/identity/v1/commitment" || secret)`) for on-chain governance and community registry membership.
 - Cross-dApp unlinkable scoped nullifiers (`SHA-256("lez/identity/v1/scoped_nullifier" || secret || scope_id)`).
@@ -110,14 +119,16 @@ lez-wallet-sdk/
 - Two-Tier Shamir Secret Sharing (SSS) over GF(2^8) via `sharks` crate, encrypting threshold shares to designated accountability trustees using secp256k1 ECDH with XOR keystream encryption.
 - Memory protection via `ZeroizeOnDrop` and automatic clearing upon wallet lock.
 
-#### 9. Comprehensive C-ABI FFI & Basecamp Interop Layer (`crates/sdk-ffi`, `include/lez_wallet_sdk.h`)
+#### 9. Comprehensive C-ABI FFI & Basecamp Interop Layer (`crates/sdk-ffi`, `include/e_wallet_sdk.h`)
+
 - Native C-ABI surface (`extern "C"`) exporting opaque engine handles (`FfiSdkEngine`), built as `cdylib`, `staticlib`, and `rlib`.
 - Panic-safe execution boundary wrapping operations in `catch_unwind` and returning ABI-safe JSON payloads (`{"ok": true, ...}` / `{"ok": false, "error": "..."}`).
-- Non-blocking approval bridge (`FfiApprovalCallback`) supporting synchronous decisions and asynchronous deferred decision submission (`lez_wallet_submit_approval_decision`) for Qt/QML modals.
-- Complete coverage of `OwnerApi` (including `lez_wallet_change_password` and `lez_wallet_set_account_label`), `DAppApi`, and Identity Accountability APIs.
-- Header generation via `cbindgen` producing [`include/lez_wallet_sdk.h`](include/lez_wallet_sdk.h) with strict C/C++ linkage guards.
+- Non-blocking approval bridge (`FfiApprovalCallback`) supporting synchronous decisions and asynchronous deferred decision submission (`e_wallet_submit_approval_decision`) for Qt/QML modals.
+- Complete coverage of `OwnerApi` (including `e_wallet_change_password` and `e_wallet_set_account_label`), `DAppApi`, and Identity Accountability APIs.
+- Header generation via `cbindgen` producing [`include/e_wallet_sdk.h`](include/e_wallet_sdk.h) with strict C/C++ linkage guards.
 
 #### 10. Comprehensive Command-Line Interface (`crates/cli`, `evice-wallet`)
+
 - Standalone, zero-dependency terminal binary dispatching directly to the headless `SdkEngine` core.
 - **Robust Terminal Security:** Zero-echo password prompting via `rpassword::prompt_password` preventing shoulder surfing and terminal scrollback leaks (CWE-522), mandatory password confirmation on wallet creation/restoration to eliminate typo lockouts, and explicit storage overwrite protection requiring `--force`.
 - **4-Direction Asset Transfers & LNS:** Supports `public`, `shield`, `unshield`, and `private` transfers with non-zero amount validation, account privacy verification, and transparent `.lez` domain resolution.
@@ -126,6 +137,7 @@ lez-wallet-sdk/
 - **Human-Centric Presentation:** Mnemonic recovery phrases displayed in a clean, numbered 3-column grid (`1. word   2. word   3. word`), preventing line-wrapping across 12- and 24-word phrases.
 
 #### 11. Standalone Development Environment (`dev-env`, Docker, Justfile)
+
 - **Containerized LEZ Sequencer:** Multi-stage `Dockerfile` packaging an authentic `sequencer_service` running in `--features standalone` mode with an in-memory mocked Bedrock L1 layer.
 - **Fast Proving Execution:** Operates under `RISC0_DEV_MODE=1` producing transaction validation and state commitments in milliseconds without zkVM STARK proving latency.
 - **Zero Faucet Dependency:** Pre-funded genesis accounts ([`genesis_accounts.json`](dev-env/genesis_accounts.json)) with Alice (dispenser, 10T units) and Bob (counterparty, 20T units), plus shielded pools, insulating local development from external network conditions.
@@ -133,6 +145,7 @@ lez-wallet-sdk/
 - **Comprehensive Documentation:** Full setup, account tables, and operational workflows documented in [`dev-env/README.md`](dev-env/README.md).
 
 #### 12. On-Chain Smart Contract, Program Deployment & Dispatcher (`programs/`, `tools/`, `deployments.json`)
+
 - **zkVM Testimonial Smart Contract (`programs/testimonial-program`):** Embeds `SUBMISSION_ID` into submitter PDA records with strict invariant checks ($\le 280$ byte text, $\le 64$ byte moniker, submitter deduplication per submission ID).
 - **On-Chain Dispatcher Tool (`tools/dispatcher`, `lez-dispatcher`):** CLI tool for chunked program bytecode deployment via `ProgramLoader`, sending on-chain testimonial transactions, checking registry status, and dispatching raw instructions.
 - **Unified Deployment Registry (`deployments.json`):** Tracks deployed program header accounts across `standalone` (local) and `testnet` (public) environments, dynamically linked with `BuiltinVerifier` and `TestimonialDecoder`.
@@ -140,6 +153,7 @@ lez-wallet-sdk/
 - **Comprehensive Guide:** Complete build, deploy, and dispatch instructions documented in [`docs/program-deployment.md`](docs/program-deployment.md).
 
 #### 13. Native 4-Way Transfers & Smart Contract Dispatch (`api.rs`, `sdk-ffi`)
+
 - **Native 4-Way Transfer Execution:** Resolves sender and recipient account privacy via `AccountIdentity::PrivateOwned` and `AccountIdentity::Public`, supporting all four transfer vectors: Public ➝ Public, Public ➝ Private (Shielding), Private ➝ Public (Deshielding), and Private ➝ Private (Shielded).
 - **Strict Guard Clauses:** Prohibits zero-amount transfers (`"Transfer amount must be greater than zero"`) and validates self-transfers to reject identical-account transfers within the same privacy boundary while allowing cross-privacy shielding/unshielding.
 - **Idiomatic Smart Contract Invocations (`propose_contract_call`):** Dedicated API accepting `program_id`, `payer_id`, `mentions`, and instruction `calldata`, properly binding program actor states for signers and non-signing accounts.
@@ -148,20 +162,23 @@ lez-wallet-sdk/
 - **Logos DAO Governance Reference Mini-App:** Demonstrates end-to-end integration of Wallet Provider SDK and Identity Accountability (Domain 6) for anonymous, Sybil-resistant voting via scoped nullifiers and BIP-340 Schnorr ballot attestations.
 
 #### 14. Dynamic Dual-Protocol Compatibility (`v03_compat.rs`, `client.rs`, `api.rs`)
+
 - **Native Dual-Protocol Engine:** Supports seamless bidirectional transaction compatibility between canonical live testnets running LEZ v0.3.x (`V03ShardModel`, such as `https://testnet.lez.logos.co`) and modern nodes running LEZ v0.4.x (`V04ActorModel`).
 - **Authentic LEZ v0.3 Borsh Wire Layout (`v03_compat.rs`):** Constructs byte-for-byte protocol-compliant wire payloads (`V03ProgramShardSelector`, `V03FeeDeclaration`, `V03Message`, `V03WitnessSet`, `V03PublicTransaction`, `V03LeeTransaction`) using canonical LEZ v0.3 pre-image hash prefixes (`/LEE/v0.3/Message/Public/...`) and signature sets.
 - **Adaptive Protocol Version Probing (`detect_protocol_version`):** Automatically and non-intrusively detects the target sequencer protocol schema at runtime via schema probing and caches the detected protocol version (`V03ShardModel` vs `V04ActorModel`).
 - **Full RPC Error Preservation:** Preserves `code`, `message`, and `data` in JSON-RPC errors (preventing upstream error masking), allowing granular diagnosis of on-chain sequencer rejections.
 - **Strict Git Commit Pinning:** Locks all upstream LEZ dependencies in `Cargo.toml` to explicit commit hash `5562eeeb200d67c51ba58976ba7b0bb63c19a142` without local path overrides, guaranteeing clean reproducible upstream compatibility.
-- **Universal Account Identifier Resolution (`resolve_account` / `lez_wallet_resolve_account`):** Unified resolution accepting raw Base58, prefixed `Public/...`, `Private/...`, or `*.lez` domain names, returning canonical address, privacy type, label, and local keystore ownership.
+- **Universal Account Identifier Resolution (`resolve_account` / `e_wallet_resolve_account`):** Unified resolution accepting raw Base58, prefixed `Public/...`, `Private/...`, or `*.lez` domain names, returning canonical address, privacy type, label, and local keystore ownership.
 - **Shielded + Public Balance Aggregation:** Aggregates zero-knowledge circuit shielded pool and public pool balances for private accounts with formatted thousand-separator presentation.
 
 #### 15. Dynamic Fee Quoting & Gas Baseline Calibration (`api.rs`, `store.rs`, `v03_compat.rs`)
+
 - **Calibrated Gas Limit Baseline (`DEFAULT_WALLET_GAS_LIMIT` = 200,000):** Establishes a robust execution gas baseline (200,000 units) that accommodates both standard transfers (~27,000 gas) and smart contract executions, paired with dynamic on-chain fee calculation (`v03_max_fee_for` / `get_fee_state`) preventing `MaxFeeBelowReserve` while staying well within user balances to avoid `PayerCannotFund`.
 - **Idiomatic Upstream Config Overrides:** Injects the effective gas limit into upstream `WalletCore` via `WalletConfigOverrides` during `open_or_init` and `create_wallet`, ensuring active in-memory transactions match on-chain fee requirements.
-- **Dynamic Configuration & C-ABI FFI:** Exposes `get_gas_limit()` and `set_gas_limit(limit: u64)` across SDK Engine and C FFI (`lez_wallet_get_gas_limit`, `lez_wallet_set_gas_limit`) with persistent override storage in `sdk_state.json`.
+- **Dynamic Configuration & C-ABI FFI:** Exposes `get_gas_limit()` and `set_gas_limit(limit: u64)` across SDK Engine and C FFI (`e_wallet_get_gas_limit`, `e_wallet_set_gas_limit`) with persistent override storage in `sdk_state.json`.
 
 #### 16. Protocol Invariants & State Transition Guardrails (`docs/protocol-compatibility-and-invariants.md`)
+
 - **Dual Cryptographic Account Boundaries:** Distinguishes elliptic-curve authenticated Public accounts from lattice-based (ML-KEM-768) and SNARK-based (BabyJubjub/Poseidon) Private accounts, documenting the impossibility of producing ECDSA signatures from private account keys.
 - **Asymmetric Deposit Trap Mitigation:** Identifies the protocol-level lockup that occurs when transparent native balances are deposited into private account shards (`Public/<id>`), providing architectural guardrails for downstream client applications.
 - **Comprehensive Technical Reference:** For in-depth architectural and mathematical analysis, see [docs/protocol-compatibility-and-invariants.md](docs/protocol-compatibility-and-invariants.md).
@@ -169,16 +186,18 @@ lez-wallet-sdk/
 ## Quick Start
 
 ### Prerequisites
+
 - **Rust Toolchain:** Pinned to Rust 1.98.1+ via `rust-toolchain.toml`.
 - **LEZ Monorepo:** Pinned directly via Cargo Git dependencies tracking `https://github.com/logos-blockchain/logos-execution-zone` (commit `5562eee`), making the SDK completely standalone without requiring local sibling checkouts.
 
 ### Building & Checking
+
 Commands can be run via the [`Justfile`](Justfile) task runner or directly with `cargo`:
 
 ```bash
 # Clone the repository
-git clone https://github.com/evice-labs/lez-wallet-sdk.git
-cd lez-wallet-sdk
+git clone https://github.com/evice-labs/e-wallet-sdk.git
+cd e-wallet-sdk
 
 # Using Just task runner
 just build            # Compile all workspace crates
@@ -217,6 +236,7 @@ just dev-clean
 ```
 
 For developer workstations without a Docker daemon, launch directly via native Cargo:
+
 ```bash
 just dev-native-start
 ```
@@ -258,19 +278,19 @@ cargo run --bin evice-wallet -- identity nullifier --scope "dao_voting_room"
 cargo run --bin evice-wallet -- identity attest --scope "dao_voting_room" --message "Vote YES on Proposal 42"
 ```
 
-### Prover Worker Daemon (`lez-prover-daemon`)
+### Prover Worker Daemon (`e-prover-daemon`)
 
 The standalone Zero-Knowledge background worker daemon offloads and decouples heavy RISC Zero zkVM proving from the wallet application, eliminating UI freezes and IPC timeouts (`callRemoteMethod timed out`):
 
 ```bash
 # Launch the Prover Worker Daemon (Dual-Core friendly with cooperative execution)
-cargo run -p sdk-engine --bin lez-prover-daemon -- --socket /tmp/lez_prover.sock --threads 1
+cargo run -p sdk-engine --bin e-prover-daemon -- --socket /tmp/lez_prover.sock --threads 1
 
 # Check worker daemon health / ping
-cargo run -p sdk-engine --bin lez-prover-daemon -- --ping
+cargo run -p sdk-engine --bin e-prover-daemon -- --ping
 
 # Query worker daemon queue, active proving jobs, and resource status
-cargo run -p sdk-engine --bin lez-prover-daemon -- --status
+cargo run -p sdk-engine --bin e-prover-daemon -- --status
 ```
 
 ### On-Chain Program Deployment & Testimonials (`lez-dispatcher`)
@@ -306,6 +326,7 @@ Execute the demo script to verify build integrity, C-ABI generation, CLI diagnos
 ## Continuous Integration & Quality Assurance
 
 Automated GitHub Actions workflows are configured in `.github/workflows/`:
+
 - **`ci-linux.yml`:** Runs on `ubuntu-latest` validating `cargo check`, `cargo test`, `cargo clippy`, and verifies the complete absence of test auto-approval symbols (`PolicyApprovalHandler`) in release binaries.
 - **`cli-e2e.yml`:** Builds workspace binaries, executes the complete end-to-end CLI validation suite in an isolated runner environment, and validates `./demo.sh`.
 - **`ci-macos.yml`:** Runs on `macos-latest` ensuring full macOS compilation and test suite compatibility.
@@ -326,6 +347,7 @@ Automated GitHub Actions workflows are configured in `.github/workflows/`:
 ## License
 
 Dual-licensed under either:
+
 - **MIT License** ([LICENSE-MIT](LICENSE-MIT))
 - **Apache License, Version 2.0** ([LICENSE-APACHE](LICENSE-APACHE))
 

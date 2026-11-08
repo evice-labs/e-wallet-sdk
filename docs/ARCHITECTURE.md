@@ -19,7 +19,7 @@ The Evice Wallet SDK is engineered around five fundamental architectural tenets:
 The workspace is structured into specialized, loosely coupled crates under `crates/`, with root-level container and task automation:
 
 ```
-lez-wallet-sdk/
+e-wallet-sdk/
 ├── Cargo.toml                  # Workspace root manifest and unified dependency pins
 ├── SUBMISSION_ID               # Unique submission identifier for on-chain attribution
 ├── README.md                   # Quickstart, installation, and build documentation
@@ -51,14 +51,14 @@ lez-wallet-sdk/
 
 ### Component Responsibility Matrix
 
-| Component | Responsibility | Public Interface | Key Dependencies |
-|---|---|---|---|
-| **`sdk-engine`** | Central orchestrator, session/grant store, transaction pipeline, decoders, effect simulations, LNS resolver, identity accountability (HKDF, BIP-340 Schnorr, Two-Tier SSS), EmPoWer PoW mining & L1-to-LEZ channel bridge (`pow.rs`), atomic persistence, and token facade. | `DAppApi`, `OwnerApi`, `SdkEngine`, `PowBridgeManager`, `ApprovalHandler` | `wallet`, `lee`, `common`, `tokio`, `argon2`, `sha2`, `k256`, `sharks` |
-| **`sdk-ffi`** | Exposes C-ABI (`extern "C"`) functions with opaque handles, JSON serialization, and non-blocking approval callback bridge for Logos Basecamp desktop plugins (`wallet-provider`). | `lez_wallet_engine_new()`, `lez_wallet_engine_free()`, `lez_wallet_set_approval_callback()`, `OwnerApi`, `DAppApi`, Identity Accountability, EmPoWer PoW & Channel Bridge, and `include/lez_wallet_sdk.h` | `sdk-engine`, `serde_json`, `cbindgen`, `dashmap`, `tokio` |
-| **`cli`** | Interactive command-line binary (`evice-wallet`) for headless operations, scripting, local testing, and offline address resolution. | Command-line interface via `clap` | `sdk-engine`, `tokio`, `clap`, `env_logger` |
-| **`testimonial-program`** | On-chain RISC-V zkVM smart contract storing testimonials and binding `SUBMISSION_ID` to submitter PDA records. | Program header ID, instruction calldata ABI | `lee`, `lee_core`, `common`, `serde`, `borsh` |
-| **`tools/dispatcher`** | Headless CLI tool (`lez-dispatcher`) for uploading program bytecode via `ProgramLoader`, sending on-chain transactions, and syncing `deployments.json`. | Command-line interface via `clap` | `wallet`, `program_loader_core`, `testimonial-program`, `serde_json` |
-| **`evidence-tool`** | Scans on-chain testimonial records from sequencer, filtering by `submission_id` to verify distinct accounts and temporal dispersion. | Command-line audit utility | `wallet`, `common`, `clap`, `tokio` |
+| Component                 | Responsibility                                                                                                                                                                                                                                                              | Public Interface                                                                                                                                                                                  | Key Dependencies                                                       |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **`sdk-engine`**          | Central orchestrator, session/grant store, transaction pipeline, decoders, effect simulations, LNS resolver, identity accountability (HKDF, BIP-340 Schnorr, Two-Tier SSS), EmPoWer PoW mining & L1-to-LEZ channel bridge (`pow.rs`), atomic persistence, and token facade. | `DAppApi`, `OwnerApi`, `SdkEngine`, `PowBridgeManager`, `ApprovalHandler`                                                                                                                         | `wallet`, `lee`, `common`, `tokio`, `argon2`, `sha2`, `k256`, `sharks` |
+| **`sdk-ffi`**             | Exposes C-ABI (`extern "C"`) functions with opaque handles, JSON serialization, and non-blocking approval callback bridge for Logos Basecamp desktop plugins (`wallet-provider`).                                                                                           | `e_wallet_engine_new()`, `e_wallet_engine_free()`, `e_wallet_set_approval_callback()`, `OwnerApi`, `DAppApi`, Identity Accountability, EmPoWer PoW & Channel Bridge, and `include/e_wallet_sdk.h` | `sdk-engine`, `serde_json`, `cbindgen`, `dashmap`, `tokio`             |
+| **`cli`**                 | Interactive command-line binary (`evice-wallet`) for headless operations, scripting, local testing, and offline address resolution.                                                                                                                                         | Command-line interface via `clap`                                                                                                                                                                 | `sdk-engine`, `tokio`, `clap`, `env_logger`                            |
+| **`testimonial-program`** | On-chain RISC-V zkVM smart contract storing testimonials and binding `SUBMISSION_ID` to submitter PDA records.                                                                                                                                                              | Program header ID, instruction calldata ABI                                                                                                                                                       | `lee`, `lee_core`, `common`, `serde`, `borsh`                          |
+| **`tools/dispatcher`**    | Headless CLI tool (`lez-dispatcher`) for uploading program bytecode via `ProgramLoader`, sending on-chain transactions, and syncing `deployments.json`.                                                                                                                     | Command-line interface via `clap`                                                                                                                                                                 | `wallet`, `program_loader_core`, `testimonial-program`, `serde_json`   |
+| **`evidence-tool`**       | Scans on-chain testimonial records from sequencer, filtering by `submission_id` to verify distinct accounts and temporal dispersion.                                                                                                                                        | Command-line audit utility                                                                                                                                                                        | `wallet`, `common`, `clap`, `tokio`                                    |
 
 ## 3. System Architecture Diagram
 
@@ -182,7 +182,7 @@ External dApps communicate with the SDK through isolated, ephemeral sessions:
 
 - **Session Lifecycle:** A dApp calls `connect(module_id)`, which generates a cryptographic `SessionId` (UUID v4) and registers a `Session` with an initial duration of 1 hour (`DEFAULT_SESSION_DURATION`).
 - **Account-Level Grants:** A session starts with zero grants. The dApp must explicitly call `request_accounts(...)` to request privileges per account:
-  - `GrantKind::Read`: Grants permission to inspect the account's balance and public program state. A dApp *cannot* read even the existence or balance of a private/shielded account without an explicit `Read` grant.
+  - `GrantKind::Read`: Grants permission to inspect the account's balance and public program state. A dApp _cannot_ read even the existence or balance of a private/shielded account without an explicit `Read` grant.
   - `GrantKind::Propose`: Grants permission to assemble and submit transaction proposals for human approval.
   - `GrantKind::IdentityRead`: Grants permission to inspect the public identity commitment and derive scope-specific pseudonymous nullifiers.
   - `GrantKind::IdentityPropose`: Grants permission to sign scoped attestations or prepare threshold trustee registration payloads.
@@ -371,7 +371,7 @@ IdentityCommitment                               SHA-256("lez/identity/v1/scoped
    - Governed by `GrantKind::IdentityRead` (inspect commitment and derive scoped nullifier) and `GrantKind::IdentityPropose` (sign attestation or construct registration payload).
    - Informs users with clear consent disclosures prior to identity generation.
 
-### 4.10 C-ABI FFI & Host Interop Layer (`crates/sdk-ffi`, `include/lez_wallet_sdk.h`)
+### 4.10 C-ABI FFI & Host Interop Layer (`crates/sdk-ffi`, `include/e_wallet_sdk.h`)
 
 To enable seamless, language-agnostic integration with Logos Basecamp desktop plugins (`wallet-provider`) and third-party native applications without compromising Rust's memory safety guarantees, the `sdk-ffi` crate exposes a pure C-ABI surface:
 
@@ -386,11 +386,11 @@ To enable seamless, language-agnostic integration with Logos Basecamp desktop pl
 3. **Approval Callback & Deferred Decision Bridge:**
    - Registers a non-blocking C callback `FfiApprovalCallback(prompt_json, user_data)`.
    - Supports both synchronous immediate decisions (`1` = Approve, `0` = Reject) and asynchronous deferred decisions (`-1` = Deferred).
-   - In deferred mode, the host UI (e.g. Qt/QML modal) can display detailed diffs and later submit the decision asynchronously via `lez_wallet_submit_approval_decision(engine, request_id, decision)`.
+   - In deferred mode, the host UI (e.g. Qt/QML modal) can display detailed diffs and later submit the decision asynchronously via `e_wallet_submit_approval_decision(engine, request_id, decision)`.
 4. **Deterministic Memory Cleanup:**
-   - All string buffers allocated by the Rust runtime must be released by the caller via `lez_wallet_free_string(ptr)`.
+   - All string buffers allocated by the Rust runtime must be released by the caller via `e_wallet_free_string(ptr)`.
 5. **C/C++ Header Generation (`cbindgen`):**
-   - Header `include/lez_wallet_sdk.h` is automatically generated from Rust docstrings and function signatures, featuring `#ifdef __cplusplus` guards and standard `#pragma once` header protection.
+   - Header `include/e_wallet_sdk.h` is automatically generated from Rust docstrings and function signatures, featuring `#ifdef __cplusplus` guards and standard `#pragma once` header protection.
 
 ### 4.11 Command-Line Interface (`crates/cli`, `evice-wallet`)
 
@@ -489,10 +489,11 @@ To ensure seamless, resilient interoperation between modern SDK engine traits an
 ### 4.15 Protocol State Separation & Invariant Guardrails (`docs/protocol-compatibility-and-invariants.md`)
 
 To ensure safe operation across different LEZ network iterations and protect user funds from irreversible protocol-level traps:
+
 1. **Cryptographic Identity Asymmetry:**
    - Public accounts are derived from ECDSA/Schnorr public keys and authenticate via cryptographic signatures.
    - Private accounts are derived from post-quantum ML-KEM-768 viewing keys and BabyJubjub/Poseidon nullifier keys, authenticated exclusively through Zero-Knowledge SNARK proofs.
-   - Private accounts possess no ECDSA signing keys, rendering any transparent balance on their public shard permanently unspendable and unshieldable (*Asymmetric Deposit Trap*).
+   - Private accounts possess no ECDSA signing keys, rendering any transparent balance on their public shard permanently unspendable and unshieldable (_Asymmetric Deposit Trap_).
 2. **Shielding & 4-Way Private Proof Execution:**
    - Public-to-private shielding (`Public ➝ Private`), private-to-private (`Private ➝ Private`), and unshielding (`Private ➝ Public`) execute as `PrivacyPreserving` ZK transactions (`send_priv_tx_native_transfer`).
    - In `Public ➝ Private` transfers, the ZK circuit deducts the fee reserve (`~5,070,616` raw units at default `gas_limit = 34,000`) from the recipient's newly minted private note output, allowing even a brand-new Private account with `0` initial balance to receive tokens as long as the transfer amount exceeds the fee reserve (`> 5,070,616` raw units).
@@ -513,7 +514,7 @@ Because Logos Basecamp executes `ui_qml` plugins inside a strict zero-network sa
    - Enforces the **Asymmetric Deposit Trap Guardrail**: rejects any attempt to bridge transparent L1 tokens directly into a `Private` account.
    - Dispatches an on-chain LEZ settlement transaction (`V03ShardModel` and `V04ActorModel` compatible) to the active LEZ sequencer (`https://testnet.lez.logos.co` or `http://127.0.0.1:3040`), waits for block confirmation via `wallet.poller().poll_tx`, and deducts the bridged balance from `unbridged_l1_balance`.
 
-### 4.17 Zero-Knowledge Prover Worker Daemon (`prover_daemon`, `lez-prover-daemon`)
+### 4.17 Zero-Knowledge Prover Worker Daemon (`prover_daemon`, `e-prover-daemon`)
 
 To guarantee smooth, non-blocking desktop UX on resource-constrained hardware (e.g. dual-core client laptops) and prevent Logos Basecamp IPC timeouts (`callRemoteMethod timed out after 20000ms`), `sdk-engine` implements a decoupled Zero-Knowledge Proving Worker Daemon:
 
@@ -526,29 +527,29 @@ To guarantee smooth, non-blocking desktop UX on resource-constrained hardware (e
 3. **Multi-Protocol IPC Daemon (`ProverIpcServer`):**
    - Communicates via Unix Domain Socket (`/tmp/lez_prover.sock`) with structured line-delimited JSON RPC (`ping`, `status`, `submit`, `query`, `cancel`, `shutdown`).
    - Exposes real-time multi-stage progress telemetry (`Simulating`, `Proving Segment 1/2`, `Recursive STARK Fold`, `Completed`).
-   - Standalone CLI entrypoint (`lez-prover-daemon`) enables running as an independent OS service or background daemon.
+   - Standalone CLI entrypoint (`e-prover-daemon`) enables running as an independent OS service or background daemon.
 
 ## 5. Security & Privacy Model
 
 ### 5.1 Threat Mitigations
 
-| Threat Vector | Mitigation Strategy | Component |
-|---|---|---|
-| **Blind Signing** | Instruction decoders convert raw calldata into plain text; `EffectSimulator` pre-calculates balance and state diffs before prompting. | `decode/`, `effects.rs` |
-| **TOCTOU Request Tampering** | Immutable 32-byte SHA-256 intent hashing binds request parameters at creation; verified before execution. | `request.rs` |
-| **Unapproved Private Balance Snooping** | Private/shielded accounts require explicit `GrantKind::Read` authorization per account. | `session.rs` |
-| **State Corruption on Power Failure** | Two-phase atomic write-then-rename with directory fsync and `.bak` snapshot fallback. | `store.rs` |
-| **Compromised Development Auto-Approval** | `PolicyApprovalHandler` is strictly feature-gated; CI workflow runs dedicated symbols check to ensure absence from release builds. | `approval.rs`, `ci-linux.yml` |
-| **Upstream Platform Breaking Changes** | Direct Git workspace dependencies tracking `logos-execution-zone` `dev` branch with Argon2 storage encryption adapter. | `Cargo.toml`, `store.rs` |
-| **Terminal Shoulder Surfing / Password Echo** | Terminal echo disabled via `rpassword::prompt_password`; characters never written to stdout or scrollback buffer. | `cli/src/main.rs` |
-| **Typo-Induced Wallet Lockout** | Mandatory two-step password confirmation prompt before initial storage derivation. | `cli/src/main.rs` |
-| **Accidental Storage Overwrite** | Guard checks pre-existing files; requires explicit `--force` flag before re-initializing existing directories. | `cli/src/main.rs` |
-| **False Success on Empty Directory** | `ensure_wallet_exists` enforces storage verification prior to executing wallet/account operations. | `cli/src/main.rs` |
-| **Keystore Authentication Bypass on Unlock** | Verifies passphrases against encrypted storage file on disk via `wallet::storage::Storage::from_path`, preventing unauthorized state unlocking with arbitrary passwords. | `api.rs` (`unlock`) |
-| **Passphrase Rotation Vulnerability** | Validates current password against on-disk keystore before re-encrypting with new credentials; prevents unauthorized passphrase resets. | `api.rs` (`change_password`) |
-| **Unregistered LNS Handle Fund Loss** | Pre-flight destination resolution verifies LNS records exist on-chain and hold valid public receiving keys before transaction creation; rejects unresolvable domains immediately. | `api.rs`, `resolve/lns.rs` |
-| **Tampered / Forged LNS Profiles** | Authenticated AES-256-GCM tag verification bound to associated data `logos-names/v5/record`, followed by strict `profile.name == input_name` consistency checking. | `resolve/lns.rs` |
-| **Asymmetric Deposit Trap (Private Shard Asset Lock)** | Pre-flight transaction validation rejects transparent self-shielding attempts from private accounts; prevents permanent asset lockups on transparent shards. | `v03_compat.rs`, `api.rs`, `docs/protocol-compatibility-and-invariants.md` |
+| Threat Vector                                          | Mitigation Strategy                                                                                                                                                               | Component                                                                  |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| **Blind Signing**                                      | Instruction decoders convert raw calldata into plain text; `EffectSimulator` pre-calculates balance and state diffs before prompting.                                             | `decode/`, `effects.rs`                                                    |
+| **TOCTOU Request Tampering**                           | Immutable 32-byte SHA-256 intent hashing binds request parameters at creation; verified before execution.                                                                         | `request.rs`                                                               |
+| **Unapproved Private Balance Snooping**                | Private/shielded accounts require explicit `GrantKind::Read` authorization per account.                                                                                           | `session.rs`                                                               |
+| **State Corruption on Power Failure**                  | Two-phase atomic write-then-rename with directory fsync and `.bak` snapshot fallback.                                                                                             | `store.rs`                                                                 |
+| **Compromised Development Auto-Approval**              | `PolicyApprovalHandler` is strictly feature-gated; CI workflow runs dedicated symbols check to ensure absence from release builds.                                                | `approval.rs`, `ci-linux.yml`                                              |
+| **Upstream Platform Breaking Changes**                 | Direct Git workspace dependencies tracking `logos-execution-zone` `dev` branch with Argon2 storage encryption adapter.                                                            | `Cargo.toml`, `store.rs`                                                   |
+| **Terminal Shoulder Surfing / Password Echo**          | Terminal echo disabled via `rpassword::prompt_password`; characters never written to stdout or scrollback buffer.                                                                 | `cli/src/main.rs`                                                          |
+| **Typo-Induced Wallet Lockout**                        | Mandatory two-step password confirmation prompt before initial storage derivation.                                                                                                | `cli/src/main.rs`                                                          |
+| **Accidental Storage Overwrite**                       | Guard checks pre-existing files; requires explicit `--force` flag before re-initializing existing directories.                                                                    | `cli/src/main.rs`                                                          |
+| **False Success on Empty Directory**                   | `ensure_wallet_exists` enforces storage verification prior to executing wallet/account operations.                                                                                | `cli/src/main.rs`                                                          |
+| **Keystore Authentication Bypass on Unlock**           | Verifies passphrases against encrypted storage file on disk via `wallet::storage::Storage::from_path`, preventing unauthorized state unlocking with arbitrary passwords.          | `api.rs` (`unlock`)                                                        |
+| **Passphrase Rotation Vulnerability**                  | Validates current password against on-disk keystore before re-encrypting with new credentials; prevents unauthorized passphrase resets.                                           | `api.rs` (`change_password`)                                               |
+| **Unregistered LNS Handle Fund Loss**                  | Pre-flight destination resolution verifies LNS records exist on-chain and hold valid public receiving keys before transaction creation; rejects unresolvable domains immediately. | `api.rs`, `resolve/lns.rs`                                                 |
+| **Tampered / Forged LNS Profiles**                     | Authenticated AES-256-GCM tag verification bound to associated data `logos-names/v5/record`, followed by strict `profile.name == input_name` consistency checking.                | `resolve/lns.rs`                                                           |
+| **Asymmetric Deposit Trap (Private Shard Asset Lock)** | Pre-flight transaction validation rejects transparent self-shielding attempts from private accounts; prevents permanent asset lockups on transparent shards.                      | `v03_compat.rs`, `api.rs`, `docs/protocol-compatibility-and-invariants.md` |
 
 ### 5.2 Privacy Guarantees
 
@@ -561,6 +562,7 @@ To guarantee smooth, non-blocking desktop UX on resource-constrained hardware (e
 Following the project's phased delivery approach, the architecture document reflects factual, currently implemented systems, with future capabilities staged for incremental addition:
 
 ### Current Implementation (Core Headless Engine, FFI, Tooling & Smart Contract)
+
 - [x] Three-tier architecture skeleton (`sdk-engine`, `sdk-ffi`, `cli`, `evidence-tool`).
 - [x] In-memory session store with per-account grants (`Read`, `Propose`, `IdentityRead`, `IdentityPropose`) and automatic expiration.
 - [x] Immutable request pipeline with deterministic 32-byte SHA-256 intent hashing.
@@ -573,10 +575,11 @@ Following the project's phased delivery approach, the architecture document refl
 - [x] Identity Accountability cryptographic primitives (HKDF derivation, scoped nullifiers, Two-Tier Shamir Secret Sharing over GF($2^8$), BIP-340 Schnorr attestations, and secp256k1 ECDH).
 - [x] Crash-safe atomic store with write-then-rename and `.bak` recovery.
 - [x] Automated CI pipelines for Linux and macOS tracking upstream LEZ `dev`.
-- [x] **Full C-ABI FFI Layer (`sdk-ffi`):** Complete `extern "C"` surface with opaque pointer handles (`FfiSdkEngine`), panic-safe JSON serialization (`{"ok": true, ...}` / `{"ok": false, "error": "..."}`), non-blocking approval callback bridge supporting synchronous decisions & asynchronous deferred approvals, memory lifecycle (`lez_wallet_free_string`), and auto-generated C header (`include/lez_wallet_sdk.h`).
+- [x] **Full C-ABI FFI Layer (`sdk-ffi`):** Complete `extern "C"` surface with opaque pointer handles (`FfiSdkEngine`), panic-safe JSON serialization (`{"ok": true, ...}` / `{"ok": false, "error": "..."}`), non-blocking approval callback bridge supporting synchronous decisions & asynchronous deferred approvals, memory lifecycle (`e_wallet_free_string`), and auto-generated C header (`include/e_wallet_sdk.h`).
 - [x] **Comprehensive CLI Subcommands (`cli`):** Full dispatch wiring for wallet lifecycle (`create`, `open`, `restore`), account management (`create-public`, `create-private`, `list`, `balance`), transfers across 4 directions with transparent `.lez` LNS name resolution and interactive terminal approval modal, and token operations (`create-definition`, `initialize-holding`, `transfer`, `mint`, `burn`, `balance`).
 - [x] **Standalone Development Environment (`dev-env/`, Docker, Justfile):** Containerized and native standalone LEZ sequencer with mocked Bedrock L1, pre-funded Alice & Bob genesis accounts, fast `RISC0_DEV_MODE=1` execution, zero external network dependency, and declarative `Justfile` tasks (`dev-start`, `dev-stop`, `dev-health`, `dev-fund`, `dev-clean`).
 - [x] **On-Chain Smart Contract & Dispatcher Tooling (`programs/`, `tools/`, `deployments.json`):** RISC-V zkVM `testimonial-program` with `SUBMISSION_ID` attribution, `lez-dispatcher` program deployment and transaction dispatch CLI, dynamic multi-network `deployments.json` registry, and `evidence-tool` adoption auditor.
 
 ### Upcoming Incremental Stages
+
 - [ ] **Basecamp Integration & Testimonial Mini-App:** Core and UI Basecamp modules published to catalog, testimonial submission on testnet 0.3 - 0.4.
