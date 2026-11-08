@@ -35,7 +35,7 @@ impl Default for TestimonialDecoder {
 }
 
 impl TestimonialDecoder {
-    /// Create decoder reading deployed program headers from deployments.json if available.
+    /// Create decoder reading deployed program headers from deployments.json.
     pub fn new() -> Self {
         let mut known = Vec::new();
         if let Ok(content) = std::fs::read_to_string("deployments.json")

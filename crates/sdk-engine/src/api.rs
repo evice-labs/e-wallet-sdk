@@ -34,7 +34,7 @@ use crate::verifier::{BuiltinVerifier, ProgramVerifier};
 const DEFAULT_SESSION_TTL: Duration = Duration::from_secs(24 * 3600);
 const DEFAULT_APPROVAL_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Canonical default gas limit for standard transactions in LEZ wallet SDK.
+/// Canonical default gas limit for standard transactions in EVICE WALLET SDK.
 /// Aligns with standard LEZ execution limits for native and token transfers.
 pub const DEFAULT_WALLET_GAS_LIMIT: u64 = 34_000;
 
@@ -456,6 +456,12 @@ impl SdkEngine {
         }
     }
 
+    /// Check whether a persistent wallet storage file already exists in the given directory.
+    pub fn wallet_exists(data_dir: &std::path::Path) -> bool {
+        let config = SdkConfig::new(data_dir.to_path_buf());
+        config.wallet_storage_path.exists()
+    }
+
     pub fn open_or_init(
         data_dir: PathBuf,
         password: &str,
@@ -521,6 +527,8 @@ impl SdkEngine {
                 }
                 Err(e) => return Err(SdkError::Internal(e)),
             }
+        } else if password.is_empty() {
+            return Err(SdkError::WalletNotInitialized);
         } else {
             let (wallet, _mnemonic) = WalletCore::new_init_storage_with_client(
                 config.wallet_config_path.clone(),
