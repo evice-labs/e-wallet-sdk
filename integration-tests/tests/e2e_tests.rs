@@ -1,5 +1,5 @@
+use e_wallet_sdk::*;
 use integration_tests::harness::{MockApprovalHandler, TestEnv};
-use lez_wallet_sdk::*;
 use sdk_engine::SdkEngine;
 use sdk_engine::api::{AccountPrivacy, DAppApi, OwnerApi};
 use sdk_engine::approval::ApprovalDecision;
@@ -294,65 +294,65 @@ fn test_ffi_c_abi_end_to_end_lifecycle() {
     let env = TestEnv::new();
     let path_str = CString::new(env.data_dir.to_str().unwrap()).unwrap();
 
-    let engine = unsafe { lez_wallet_engine_new(path_str.as_ptr()) };
+    let engine = unsafe { e_wallet_engine_new(path_str.as_ptr()) };
     assert!(!engine.is_null());
 
     // Register callback
     let cb_res = unsafe {
-        lez_wallet_set_approval_callback(engine, mock_e2e_approval_cb, std::ptr::null_mut())
+        e_wallet_set_approval_callback(engine, mock_e2e_approval_cb, std::ptr::null_mut())
     };
-    unsafe { lez_wallet_free_string(cb_res) };
+    unsafe { e_wallet_free_string(cb_res) };
 
     // Create wallet via FFI
     let pass = CString::new("testpass_ffi_123").unwrap();
-    let res_ptr = unsafe { lez_wallet_create_wallet(engine, pass.as_ptr()) };
+    let res_ptr = unsafe { e_wallet_create_wallet(engine, pass.as_ptr()) };
     let res_str = unsafe { CStr::from_ptr(res_ptr) }.to_str().unwrap();
     let res_json: serde_json::Value = serde_json::from_str(res_str).unwrap();
     assert_eq!(res_json["ok"], true);
-    unsafe { lez_wallet_free_string(res_ptr) };
+    unsafe { e_wallet_free_string(res_ptr) };
 
     // Create sender and recipient
     let l_alice = CString::new("Alice FFI").unwrap();
-    let alice_ptr = unsafe { lez_wallet_create_account_public(engine, l_alice.as_ptr()) };
+    let alice_ptr = unsafe { e_wallet_create_account_public(engine, l_alice.as_ptr()) };
     let alice_str = unsafe { CStr::from_ptr(alice_ptr) }.to_str().unwrap();
     let alice_json: serde_json::Value = serde_json::from_str(alice_str).unwrap();
     let alice_acc = alice_json["account_id"].as_str().unwrap().to_string();
-    unsafe { lez_wallet_free_string(alice_ptr) };
+    unsafe { e_wallet_free_string(alice_ptr) };
 
     let l_bob = CString::new("Bob FFI").unwrap();
-    let bob_ptr = unsafe { lez_wallet_create_account_public(engine, l_bob.as_ptr()) };
+    let bob_ptr = unsafe { e_wallet_create_account_public(engine, l_bob.as_ptr()) };
     let bob_str = unsafe { CStr::from_ptr(bob_ptr) }.to_str().unwrap();
     let bob_json: serde_json::Value = serde_json::from_str(bob_str).unwrap();
     let bob_acc = bob_json["account_id"].as_str().unwrap().to_string();
-    unsafe { lez_wallet_free_string(bob_ptr) };
+    unsafe { e_wallet_free_string(bob_ptr) };
 
     // Connect dApp
     let caller = CString::new("e2e_dapp").unwrap();
-    let conn_ptr = unsafe { lez_wallet_connect(engine, caller.as_ptr(), 1) };
+    let conn_ptr = unsafe { e_wallet_connect(engine, caller.as_ptr(), 1) };
     let conn_str = unsafe { CStr::from_ptr(conn_ptr) }.to_str().unwrap();
     let conn_json: serde_json::Value = serde_json::from_str(conn_str).unwrap();
     let sid = conn_json["session_id"].as_str().unwrap().to_string();
-    unsafe { lez_wallet_free_string(conn_ptr) };
+    unsafe { e_wallet_free_string(conn_ptr) };
 
     // Grant propose
     let sid_cstr = CString::new(sid).unwrap();
     let alice_cstr = CString::new(alice_acc).unwrap();
     let grant_cstr = CString::new("propose").unwrap();
     let g_ptr = unsafe {
-        lez_wallet_grant_account(
+        e_wallet_grant_account(
             engine,
             sid_cstr.as_ptr(),
             alice_cstr.as_ptr(),
             grant_cstr.as_ptr(),
         )
     };
-    unsafe { lez_wallet_free_string(g_ptr) };
+    unsafe { e_wallet_free_string(g_ptr) };
 
     // Propose transfer
     let bob_cstr = CString::new(bob_acc).unwrap();
     let amt_cstr = CString::new("1000").unwrap();
     let prop_ptr = unsafe {
-        lez_wallet_propose_native_transfer(
+        e_wallet_propose_native_transfer(
             engine,
             sid_cstr.as_ptr(),
             alice_cstr.as_ptr(),
@@ -364,30 +364,30 @@ fn test_ffi_c_abi_end_to_end_lifecycle() {
     let prop_json: serde_json::Value = serde_json::from_str(prop_str).unwrap();
     assert_eq!(prop_json["ok"], true);
     let req_id = prop_json["request_id"].as_str().unwrap().to_string();
-    unsafe { lez_wallet_free_string(prop_ptr) };
+    unsafe { e_wallet_free_string(prop_ptr) };
 
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     // Submit user decision: 0 (Reject)
     let req_cstr = CString::new(req_id.clone()).unwrap();
-    let dec_ptr = unsafe { lez_wallet_submit_approval_decision(engine, req_cstr.as_ptr(), 0) };
+    let dec_ptr = unsafe { e_wallet_submit_approval_decision(engine, req_cstr.as_ptr(), 0) };
     let dec_str = unsafe { CStr::from_ptr(dec_ptr) }.to_str().unwrap();
     let dec_json: serde_json::Value = serde_json::from_str(dec_str).unwrap();
     assert_eq!(dec_json["ok"], true);
-    unsafe { lez_wallet_free_string(dec_ptr) };
+    unsafe { e_wallet_free_string(dec_ptr) };
 
     std::thread::sleep(std::time::Duration::from_millis(50));
 
     // Verify rejection status
-    let status_ptr = unsafe { lez_wallet_get_request_status(engine, req_cstr.as_ptr()) };
+    let status_ptr = unsafe { e_wallet_get_request_status(engine, req_cstr.as_ptr()) };
     let status_str = unsafe { CStr::from_ptr(status_ptr) }.to_str().unwrap();
     let status_json: serde_json::Value = serde_json::from_str(status_str).unwrap();
     assert_eq!(status_json["ok"], true);
     assert_eq!(status_json["status"], "rejected");
-    unsafe { lez_wallet_free_string(status_ptr) };
+    unsafe { e_wallet_free_string(status_ptr) };
 
     // Free engine
-    unsafe { lez_wallet_engine_free(engine) };
+    unsafe { e_wallet_engine_free(engine) };
 }
 
 #[tokio::test]
@@ -601,7 +601,7 @@ async fn test_lns_name_resolution_and_ffi_safety() {
 fn test_lns_ffi_c_abi_safety() {
     let ffi_env = TestEnv::new();
     let path_str = CString::new(ffi_env.data_dir.to_str().unwrap()).unwrap();
-    let ffi_engine = unsafe { lez_wallet_engine_new(path_str.as_ptr()) };
+    let ffi_engine = unsafe { e_wallet_engine_new(path_str.as_ptr()) };
     assert!(!ffi_engine.is_null());
 
     let name = CString::new("alice.lez").unwrap();
@@ -609,29 +609,29 @@ fn test_lns_ffi_c_abi_safety() {
 
     // 1. Null engine pointer safety
     let null_ptr_res =
-        unsafe { lez_wallet_resolve_name(std::ptr::null_mut(), sess.as_ptr(), name.as_ptr()) };
+        unsafe { e_wallet_resolve_name(std::ptr::null_mut(), sess.as_ptr(), name.as_ptr()) };
     let null_res_str = unsafe { CStr::from_ptr(null_ptr_res) }.to_str().unwrap();
     let null_res_json: serde_json::Value = serde_json::from_str(null_res_str).unwrap();
     assert_eq!(null_res_json["ok"], false);
     assert_eq!(null_res_json["error"], "Null engine handle");
-    unsafe { lez_wallet_free_string(null_ptr_res) };
+    unsafe { e_wallet_free_string(null_ptr_res) };
 
     // 2. Null parameter pointers safety
     let null_param_res =
-        unsafe { lez_wallet_resolve_name(ffi_engine, std::ptr::null(), name.as_ptr()) };
+        unsafe { e_wallet_resolve_name(ffi_engine, std::ptr::null(), name.as_ptr()) };
     let null_param_str = unsafe { CStr::from_ptr(null_param_res) }.to_str().unwrap();
     let null_param_json: serde_json::Value = serde_json::from_str(null_param_str).unwrap();
     assert_eq!(null_param_json["ok"], false);
-    unsafe { lez_wallet_free_string(null_param_res) };
+    unsafe { e_wallet_free_string(null_param_res) };
 
     // 3. Invalid/unauthorized session call safety
-    let uninit_res = unsafe { lez_wallet_resolve_name(ffi_engine, sess.as_ptr(), name.as_ptr()) };
+    let uninit_res = unsafe { e_wallet_resolve_name(ffi_engine, sess.as_ptr(), name.as_ptr()) };
     let uninit_str = unsafe { CStr::from_ptr(uninit_res) }.to_str().unwrap();
     let uninit_json: serde_json::Value = serde_json::from_str(uninit_str).unwrap();
     assert_eq!(uninit_json["ok"], false);
-    unsafe { lez_wallet_free_string(uninit_res) };
+    unsafe { e_wallet_free_string(uninit_res) };
 
-    unsafe { lez_wallet_engine_free(ffi_engine) };
+    unsafe { e_wallet_engine_free(ffi_engine) };
 }
 
 #[tokio::test]
@@ -724,7 +724,7 @@ async fn test_engine_transfers_and_holdings() {
 fn test_ffi_contract_calls_and_holdings() {
     let env = TestEnv::new();
     let ffi_data_dir = CString::new(env.data_dir.to_str().unwrap()).unwrap();
-    let ffi_engine = unsafe { lez_wallet_engine_new(ffi_data_dir.as_ptr()) };
+    let ffi_engine = unsafe { e_wallet_engine_new(ffi_data_dir.as_ptr()) };
     assert!(!ffi_engine.is_null());
 
     let h_str = CString::new(lee::AccountId::default().to_string()).unwrap();
@@ -733,7 +733,7 @@ fn test_ffi_contract_calls_and_holdings() {
     let name_str = CString::new("FFI Token").unwrap();
 
     let reg_res = unsafe {
-        lez_wallet_register_token_holding(
+        e_wallet_register_token_holding(
             ffi_engine,
             h_str.as_ptr(),
             d_str.as_ptr(),
@@ -745,15 +745,15 @@ fn test_ffi_contract_calls_and_holdings() {
     let reg_str = unsafe { CStr::from_ptr(reg_res) }.to_str().unwrap();
     let reg_json: serde_json::Value = serde_json::from_str(reg_str).unwrap();
     assert_eq!(reg_json["ok"], true);
-    unsafe { lez_wallet_free_string(reg_res) };
+    unsafe { e_wallet_free_string(reg_res) };
 
-    let list_res = unsafe { lez_wallet_list_all_token_holdings(ffi_engine) };
+    let list_res = unsafe { e_wallet_list_all_token_holdings(ffi_engine) };
     let list_str = unsafe { CStr::from_ptr(list_res) }.to_str().unwrap();
     let list_json: serde_json::Value = serde_json::from_str(list_str).unwrap();
     assert_eq!(list_json["ok"], true);
     assert_eq!(list_json["data"].as_array().unwrap().len(), 1);
     assert_eq!(list_json["data"][0]["symbol"], "FFITOKEN");
-    unsafe { lez_wallet_free_string(list_res) };
+    unsafe { e_wallet_free_string(list_res) };
 
-    unsafe { lez_wallet_engine_free(ffi_engine) };
+    unsafe { e_wallet_engine_free(ffi_engine) };
 }

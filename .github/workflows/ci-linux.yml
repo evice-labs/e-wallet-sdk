@@ -61,7 +61,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo build --release -p sdk-ffi
       - run: |
-          SO_PATH="target/release/liblez_wallet_sdk.so"
+          SO_PATH="target/release/libe_wallet_sdk.so"
           if [ ! -f "$SO_PATH" ]; then SO_PATH="target/release/libsdk_ffi.so"; fi
           if nm "$SO_PATH" 2>/dev/null | grep -q PolicyApprovalHandler; then
             echo "ERROR: PolicyApprovalHandler found in release build!"
