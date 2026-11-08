@@ -31,7 +31,7 @@ fmt:
 
 # Generate C/C++ FFI header for sdk-ffi via cbindgen
 header: 
-    PATH="$HOME/.cargo/bin:$PATH" cbindgen --config crates/sdk-ffi/cbindgen.toml --crate sdk-ffi --output include/lez_wallet_sdk.h
+    PATH="$HOME/.cargo/bin:$PATH" cbindgen --config crates/sdk-ffi/cbindgen.toml --crate sdk-ffi --output include/e_wallet_sdk.h
 
 # Run the end-to-end self-contained verification demo
 demo: 

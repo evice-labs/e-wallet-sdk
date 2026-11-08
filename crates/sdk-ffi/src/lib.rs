@@ -7,7 +7,7 @@
 //! # Conventions
 //! - Opaque handle structs wrap inner Rust types (`FfiSdkEngine`).
 //! - Structured payloads are exchanged as UTF-8 JSON strings (`*mut c_char`),
-//!   allocated by Rust and freed using [`lez_wallet_free_string`].
+//!   allocated by Rust and freed using [`e_wallet_free_string`].
 //! - All JSON responses include `{"ok": true, ...}` on success or
 //!   `{"ok": false, "error": "..."}` on failure.
 //! - All functions perform null-pointer checks before dereferencing and
@@ -39,7 +39,7 @@ use std::time::Duration;
 /// Return values:
 /// - `1`: Approve immediately
 /// - `0`: Reject immediately
-/// - `-1`: Deferred / async prompt (host will call `lez_wallet_submit_approval_decision`)
+/// - `-1`: Deferred / async prompt (host will call `e_wallet_submit_approval_decision`)
 pub type FfiApprovalCallback =
     unsafe extern "C" fn(prompt_json: *const c_char, user_data: *mut std::ffi::c_void) -> i32;
 
@@ -432,9 +432,9 @@ where
 
 // PUBLIC C-ABI INTERFACE
 
-/// Free any string previously returned by a `lez_wallet_*` function.
+/// Free any string previously returned by a `e_wallet_*` function.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_free_string(ptr: *mut c_char) {
+pub unsafe extern "C" fn e_wallet_free_string(ptr: *mut c_char) {
     if !ptr.is_null() {
         unsafe {
             drop(CString::from_raw(ptr));
@@ -457,15 +457,27 @@ pub extern "C" fn lez_sdk_api_version() -> u32 {
 
 /// Create an SdkEngine handle from a data directory path.
 ///
+/// Check whether a persistent wallet storage file already exists in the given directory.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn e_wallet_exists(data_dir: *const c_char) -> bool {
+    catch_ffi(false, || {
+        let dir_str = match unsafe { parse_c_str(data_dir) } {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        SdkEngine::wallet_exists(std::path::Path::new(dir_str))
+    })
+}
+
 /// Returns `NULL` on fatal initialization error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_engine_new(data_dir: *const c_char) -> *mut FfiSdkEngine {
-    unsafe { lez_wallet_engine_new_with_password(data_dir, std::ptr::null()) }
+pub unsafe extern "C" fn e_wallet_engine_new(data_dir: *const c_char) -> *mut FfiSdkEngine {
+    unsafe { e_wallet_engine_new_with_password(data_dir, std::ptr::null()) }
 }
 
 /// Create an SdkEngine handle with an optional storage password.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_engine_new_with_password(
+pub unsafe extern "C" fn e_wallet_engine_new_with_password(
     data_dir: *const c_char,
     password: *const c_char,
 ) -> *mut FfiSdkEngine {
@@ -511,7 +523,7 @@ pub unsafe extern "C" fn lez_wallet_engine_new_with_password(
 
 /// Free an SdkEngine handle and release associated resources.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_engine_free(engine: *mut FfiSdkEngine) {
+pub unsafe extern "C" fn e_wallet_engine_free(engine: *mut FfiSdkEngine) {
     if !engine.is_null() {
         unsafe {
             drop(Box::from_raw(engine));
@@ -521,7 +533,7 @@ pub unsafe extern "C" fn lez_wallet_engine_free(engine: *mut FfiSdkEngine) {
 
 /// Register a C-ABI approval callback for interactive approval prompt handling.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_set_approval_callback(
+pub unsafe extern "C" fn e_wallet_set_approval_callback(
     engine: *mut FfiSdkEngine,
     callback: FfiApprovalCallback,
     user_data: *mut std::ffi::c_void,
@@ -538,7 +550,7 @@ pub unsafe extern "C" fn lez_wallet_set_approval_callback(
 
 /// Get the current gas limit seed configured for transactions.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_get_gas_limit(engine: *mut FfiSdkEngine) -> u64 {
+pub unsafe extern "C" fn e_wallet_get_gas_limit(engine: *mut FfiSdkEngine) -> u64 {
     catch_ffi(sdk_engine::api::DEFAULT_WALLET_GAS_LIMIT, || {
         if engine.is_null() {
             return sdk_engine::api::DEFAULT_WALLET_GAS_LIMIT;
@@ -550,7 +562,7 @@ pub unsafe extern "C" fn lez_wallet_get_gas_limit(engine: *mut FfiSdkEngine) -> 
 
 /// Set the gas limit seed for transactions.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_set_gas_limit(
+pub unsafe extern "C" fn e_wallet_set_gas_limit(
     engine: *mut FfiSdkEngine,
     limit: u64,
 ) -> *mut c_char {
@@ -568,7 +580,7 @@ pub unsafe extern "C" fn lez_wallet_set_gas_limit(
 
 /// Submit an approval decision (`1` for Approve, `0` for Reject) for a pending request.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_submit_approval_decision(
+pub unsafe extern "C" fn e_wallet_submit_approval_decision(
     engine: *mut FfiSdkEngine,
     request_id: *const c_char,
     decision: i32,
@@ -601,7 +613,7 @@ pub unsafe extern "C" fn lez_wallet_submit_approval_decision(
 /// Create a fresh wallet encrypted under `password`.
 /// Returns JSON: `{"ok":true, "mnemonic":"word1 word2 ..."}` or `{"ok":false, "error":"..."}`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_create_wallet(
+pub unsafe extern "C" fn e_wallet_create_wallet(
     engine: *mut FfiSdkEngine,
     password: *const c_char,
 ) -> *mut c_char {
@@ -629,7 +641,7 @@ pub unsafe extern "C" fn lez_wallet_create_wallet(
 
 /// Restore a wallet from mnemonic and set password.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_restore_wallet(
+pub unsafe extern "C" fn e_wallet_restore_wallet(
     engine: *mut FfiSdkEngine,
     mnemonic: *const c_char,
     password: *const c_char,
@@ -664,7 +676,7 @@ pub unsafe extern "C" fn lez_wallet_restore_wallet(
 
 /// Lock the wallet, revoking all active sessions and purging secret keys from memory.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_lock(engine: *mut FfiSdkEngine) -> *mut c_char {
+pub unsafe extern "C" fn e_wallet_lock(engine: *mut FfiSdkEngine) -> *mut c_char {
     catch_ffi(error_json("FFI panic"), || {
         if engine.is_null() {
             return error_json("Null engine handle");
@@ -679,7 +691,7 @@ pub unsafe extern "C" fn lez_wallet_lock(engine: *mut FfiSdkEngine) -> *mut c_ch
 
 /// Unlock the wallet with password.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_unlock(
+pub unsafe extern "C" fn e_wallet_unlock(
     engine: *mut FfiSdkEngine,
     password: *const c_char,
 ) -> *mut c_char {
@@ -701,7 +713,7 @@ pub unsafe extern "C" fn lez_wallet_unlock(
 
 /// Change the wallet encryption password.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_change_password(
+pub unsafe extern "C" fn e_wallet_change_password(
     engine: *mut FfiSdkEngine,
     old_password: *const c_char,
     new_password: *const c_char,
@@ -731,7 +743,7 @@ pub unsafe extern "C" fn lez_wallet_change_password(
 
 /// Create a new public account with an optional label.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_create_account_public(
+pub unsafe extern "C" fn e_wallet_create_account_public(
     engine: *mut FfiSdkEngine,
     label: *const c_char,
 ) -> *mut c_char {
@@ -763,7 +775,7 @@ pub unsafe extern "C" fn lez_wallet_create_account_public(
 
 /// Create a new private account with an optional label.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_create_account_private(
+pub unsafe extern "C" fn e_wallet_create_account_private(
     engine: *mut FfiSdkEngine,
     label: *const c_char,
 ) -> *mut c_char {
@@ -795,7 +807,7 @@ pub unsafe extern "C" fn lez_wallet_create_account_private(
 
 /// List all accounts in the wallet with privacy and balances.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_list_all_accounts(engine: *mut FfiSdkEngine) -> *mut c_char {
+pub unsafe extern "C" fn e_wallet_list_all_accounts(engine: *mut FfiSdkEngine) -> *mut c_char {
     catch_ffi(error_json("FFI panic"), || {
         if engine.is_null() {
             return error_json("Null engine handle");
@@ -817,7 +829,7 @@ pub unsafe extern "C" fn lez_wallet_list_all_accounts(engine: *mut FfiSdkEngine)
 
 /// List all active dApp sessions.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_list_sessions(engine: *mut FfiSdkEngine) -> *mut c_char {
+pub unsafe extern "C" fn e_wallet_list_sessions(engine: *mut FfiSdkEngine) -> *mut c_char {
     catch_ffi(error_json("FFI panic"), || {
         if engine.is_null() {
             return error_json("Null engine handle");
@@ -839,7 +851,7 @@ pub unsafe extern "C" fn lez_wallet_list_sessions(engine: *mut FfiSdkEngine) -> 
 
 /// Revoke a specific dApp session by session ID.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_revoke_session(
+pub unsafe extern "C" fn e_wallet_revoke_session(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
 ) -> *mut c_char {
@@ -862,7 +874,7 @@ pub unsafe extern "C" fn lez_wallet_revoke_session(
 
 /// Set a user-friendly label for an account.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_set_account_label(
+pub unsafe extern "C" fn e_wallet_set_account_label(
     engine: *mut FfiSdkEngine,
     account_id: *const c_char,
     label: *const c_char,
@@ -900,7 +912,7 @@ pub unsafe extern "C" fn lez_wallet_set_account_label(
 
 /// Query SDK and network information.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_sdk_info(engine: *mut FfiSdkEngine) -> *mut c_char {
+pub unsafe extern "C" fn e_wallet_sdk_info(engine: *mut FfiSdkEngine) -> *mut c_char {
     catch_ffi(error_json("FFI panic"), || {
         if engine.is_null() {
             return error_json("Null engine handle");
@@ -915,7 +927,7 @@ pub unsafe extern "C" fn lez_wallet_sdk_info(engine: *mut FfiSdkEngine) -> *mut 
 
 /// Connect an untrusted caller module and open a session.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_connect(
+pub unsafe extern "C" fn e_wallet_connect(
     engine: *mut FfiSdkEngine,
     caller_identity: *const c_char,
     api_version: u32,
@@ -947,7 +959,7 @@ pub unsafe extern "C" fn lez_wallet_connect(
 
 /// Disconnect and terminate a dApp session.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_disconnect(
+pub unsafe extern "C" fn e_wallet_disconnect(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
 ) -> *mut c_char {
@@ -970,7 +982,7 @@ pub unsafe extern "C" fn lez_wallet_disconnect(
 
 /// Request accounts to share with a session.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_request_accounts(
+pub unsafe extern "C" fn e_wallet_request_accounts(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
 ) -> *mut c_char {
@@ -1000,7 +1012,7 @@ pub unsafe extern "C" fn lez_wallet_request_accounts(
 
 /// List accounts permitted for a session.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_list_accounts(
+pub unsafe extern "C" fn e_wallet_list_accounts(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
 ) -> *mut c_char {
@@ -1030,7 +1042,7 @@ pub unsafe extern "C" fn lez_wallet_list_accounts(
 
 /// Grant account access permission (`"read"` or `"propose"`) to a session.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_grant_account(
+pub unsafe extern "C" fn e_wallet_grant_account(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
     account_id: *const c_char,
@@ -1077,7 +1089,7 @@ pub unsafe extern "C" fn lez_wallet_grant_account(
 
 /// Get native balance for a specific granted account.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_get_balance(
+pub unsafe extern "C" fn e_wallet_get_balance(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
     account_id: *const c_char,
@@ -1116,7 +1128,7 @@ pub unsafe extern "C" fn lez_wallet_get_balance(
 
 /// Propose a native token transfer (accepts .lez names as `to`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_propose_native_transfer(
+pub unsafe extern "C" fn e_wallet_propose_native_transfer(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
     from_account: *const c_char,
@@ -1193,7 +1205,7 @@ pub unsafe extern "C" fn lez_wallet_propose_native_transfer(
 
 /// Propose a fungible token program transfer.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_propose_token_transfer(
+pub unsafe extern "C" fn e_wallet_propose_token_transfer(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
     from_holding: *const c_char,
@@ -1266,7 +1278,7 @@ pub unsafe extern "C" fn lez_wallet_propose_token_transfer(
 /// `mentions_json`: JSON array of AccountId strings.
 /// `calldata_hex`: Hex string of instruction calldata.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_propose_transaction(
+pub unsafe extern "C" fn e_wallet_propose_transaction(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
     mentions_json: *const c_char,
@@ -1337,7 +1349,7 @@ pub unsafe extern "C" fn lez_wallet_propose_transaction(
 /// `mentions_json`: JSON array of AccountId strings.
 /// `calldata_hex`: Hex string of instruction calldata.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_propose_contract_call(
+pub unsafe extern "C" fn e_wallet_propose_contract_call(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
     program_id: *const c_char,
@@ -1422,7 +1434,7 @@ pub unsafe extern "C" fn lez_wallet_propose_contract_call(
 
 /// List token holdings accessible to the session.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_list_token_holdings(
+pub unsafe extern "C" fn e_wallet_list_token_holdings(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
 ) -> *mut c_char {
@@ -1449,7 +1461,7 @@ pub unsafe extern "C" fn lez_wallet_list_token_holdings(
 
 /// Privileged Owner API: List all tracked token holdings.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_list_all_token_holdings(
+pub unsafe extern "C" fn e_wallet_list_all_token_holdings(
     engine: *mut FfiSdkEngine,
 ) -> *mut c_char {
     catch_ffi(error_json("FFI panic"), || {
@@ -1470,7 +1482,7 @@ pub unsafe extern "C" fn lez_wallet_list_all_token_holdings(
 
 /// Privileged Owner API: Register or update a tracked token holding.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_register_token_holding(
+pub unsafe extern "C" fn e_wallet_register_token_holding(
     engine: *mut FfiSdkEngine,
     holding_id: *const c_char,
     definition_id: *const c_char,
@@ -1524,7 +1536,7 @@ pub unsafe extern "C" fn lez_wallet_register_token_holding(
 
 /// Get the current status of a proposed transaction request.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_get_request_status(
+pub unsafe extern "C" fn e_wallet_get_request_status(
     engine: *mut FfiSdkEngine,
     request_id: *const c_char,
 ) -> *mut c_char {
@@ -1547,7 +1559,7 @@ pub unsafe extern "C" fn lez_wallet_get_request_status(
 
 /// Cancel a pending transaction request before approval.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_cancel_request(
+pub unsafe extern "C" fn e_wallet_cancel_request(
     engine: *mut FfiSdkEngine,
     request_id: *const c_char,
 ) -> *mut c_char {
@@ -1570,7 +1582,7 @@ pub unsafe extern "C" fn lez_wallet_cancel_request(
 
 /// Resolve a `.lez` human-readable domain name.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_resolve_name(
+pub unsafe extern "C" fn e_wallet_resolve_name(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
     name: *const c_char,
@@ -1602,7 +1614,7 @@ pub unsafe extern "C" fn lez_wallet_resolve_name(
 /// Resolve an account identifier (raw Base58, prefixed Public/..., prefixed Private/..., or *.lez name).
 /// Identifies privacy type, canonical address format, and user label.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_resolve_account(
+pub unsafe extern "C" fn e_wallet_resolve_account(
     engine: *mut FfiSdkEngine,
     input: *const c_char,
 ) -> *mut c_char {
@@ -1639,7 +1651,7 @@ pub unsafe extern "C" fn lez_wallet_resolve_account(
 
 /// Request identity permission grants (`IdentityRead` or `IdentityPropose`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_request_identity_access(
+pub unsafe extern "C" fn e_wallet_request_identity_access(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
     grant_kind: *const c_char,
@@ -1681,7 +1693,7 @@ pub unsafe extern "C" fn lez_wallet_request_identity_access(
 
 /// Retrieve the user's 32-byte public identity commitment as a hex string.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_get_identity_commitment(
+pub unsafe extern "C" fn e_wallet_get_identity_commitment(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
 ) -> *mut c_char {
@@ -1714,7 +1726,7 @@ pub unsafe extern "C" fn lez_wallet_get_identity_commitment(
 /// Copy the 32-byte identity commitment into a raw buffer.
 /// Returns `0` on success, or non-zero on error.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_get_identity_commitment_bytes(
+pub unsafe extern "C" fn e_wallet_get_identity_commitment_bytes(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
     out_32: *mut u8,
@@ -1746,7 +1758,7 @@ pub unsafe extern "C" fn lez_wallet_get_identity_commitment_bytes(
 
 /// Derive a scope-specific pseudonymous nullifier hex.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_derive_scoped_nullifier(
+pub unsafe extern "C" fn e_wallet_derive_scoped_nullifier(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
     scope_id: *const c_char,
@@ -1785,7 +1797,7 @@ pub unsafe extern "C" fn lez_wallet_derive_scoped_nullifier(
 /// Sign an arbitrary message using the scoped identity credential.
 /// `message_hex`: Hex-encoded byte payload to sign.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_sign_identity_attestation(
+pub unsafe extern "C" fn e_wallet_sign_identity_attestation(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
     scope_id: *const c_char,
@@ -1837,7 +1849,7 @@ pub unsafe extern "C" fn lez_wallet_sign_identity_attestation(
 /// Prepare on-chain registration payload with Two-Tier Shamir Secret Sharing threshold shares.
 /// `node_pubkeys_json`: JSON array of 32-byte hex public keys.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_prepare_identity_registration(
+pub unsafe extern "C" fn e_wallet_prepare_identity_registration(
     engine: *mut FfiSdkEngine,
     session_id: *const c_char,
     scope_id: *const c_char,
@@ -1919,7 +1931,7 @@ pub unsafe extern "C" fn lez_wallet_prepare_identity_registration(
 
 /// Start EmPoWer PoW mining across `threads` worker threads and notify L1 node (`PUT /pow/mining/start`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_pow_start_mining(
+pub unsafe extern "C" fn e_wallet_pow_start_mining(
     engine: *mut FfiSdkEngine,
     threads: u32,
 ) -> *mut c_char {
@@ -1937,7 +1949,7 @@ pub unsafe extern "C" fn lez_wallet_pow_start_mining(
 
 /// Stop EmPoWer PoW mining and notify L1 node (`PUT /pow/mining/stop`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_pow_stop_mining(engine: *mut FfiSdkEngine) -> *mut c_char {
+pub unsafe extern "C" fn e_wallet_pow_stop_mining(engine: *mut FfiSdkEngine) -> *mut c_char {
     catch_ffi(error_json("FFI panic"), || {
         if engine.is_null() {
             return error_json("Null engine handle");
@@ -1952,7 +1964,7 @@ pub unsafe extern "C" fn lez_wallet_pow_stop_mining(engine: *mut FfiSdkEngine) -
 
 /// Query current EmPoWer PoW mining telemetry and unbridged L1 reward balance (`GET /pow/status`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_pow_status(engine: *mut FfiSdkEngine) -> *mut c_char {
+pub unsafe extern "C" fn e_wallet_pow_status(engine: *mut FfiSdkEngine) -> *mut c_char {
     catch_ffi(error_json("FFI panic"), || {
         if engine.is_null() {
             return error_json("Null engine handle");
@@ -1967,7 +1979,7 @@ pub unsafe extern "C" fn lez_wallet_pow_status(engine: *mut FfiSdkEngine) -> *mu
 
 /// Execute an L1 ➝ LEZ `channelDeposit` for a transparent `Public` account (`POST /channel/deposit`).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn lez_wallet_channel_deposit(
+pub unsafe extern "C" fn e_wallet_channel_deposit(
     engine: *mut FfiSdkEngine,
     recipient_account_id: *const c_char,
     amount_str: *const c_char,
@@ -2015,52 +2027,51 @@ mod tests {
 
     #[test]
     fn test_ffi_engine_lifecycle_and_owner_flows() {
-        let tmp_dir =
-            std::env::temp_dir().join(format!("test_lez_wallet_{}", uuid::Uuid::new_v4()));
+        let tmp_dir = std::env::temp_dir().join(format!("test_e_wallet_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&tmp_dir);
         let path_str = CString::new(tmp_dir.to_str().unwrap()).unwrap();
 
-        let engine = unsafe { lez_wallet_engine_new(path_str.as_ptr()) };
+        let engine = unsafe { e_wallet_engine_new(path_str.as_ptr()) };
         assert!(!engine.is_null());
 
         // Create wallet
         let pass_str = CString::new("testpass123").unwrap();
-        let res_ptr = unsafe { lez_wallet_create_wallet(engine, pass_str.as_ptr()) };
+        let res_ptr = unsafe { e_wallet_create_wallet(engine, pass_str.as_ptr()) };
         assert!(!res_ptr.is_null());
         let res_str = unsafe { CStr::from_ptr(res_ptr) }.to_str().unwrap();
         let parsed: serde_json::Value = serde_json::from_str(res_str).unwrap();
         assert_eq!(parsed["ok"], true);
         assert!(parsed["mnemonic"].as_str().is_some());
-        unsafe { lez_wallet_free_string(res_ptr) };
+        unsafe { e_wallet_free_string(res_ptr) };
 
         // Create public account
         let label_str = CString::new("test_public").unwrap();
-        let acc_ptr = unsafe { lez_wallet_create_account_public(engine, label_str.as_ptr()) };
+        let acc_ptr = unsafe { e_wallet_create_account_public(engine, label_str.as_ptr()) };
         assert!(!acc_ptr.is_null());
         let acc_str = unsafe { CStr::from_ptr(acc_ptr) }.to_str().unwrap();
         let acc_json: serde_json::Value = serde_json::from_str(acc_str).unwrap();
         assert_eq!(acc_json["ok"], true);
         let pub_account_id = acc_json["account_id"].as_str().unwrap().to_string();
-        unsafe { lez_wallet_free_string(acc_ptr) };
+        unsafe { e_wallet_free_string(acc_ptr) };
 
         // List accounts
-        let list_ptr = unsafe { lez_wallet_list_all_accounts(engine) };
+        let list_ptr = unsafe { e_wallet_list_all_accounts(engine) };
         assert!(!list_ptr.is_null());
         let list_str = unsafe { CStr::from_ptr(list_ptr) }.to_str().unwrap();
         let list_json: serde_json::Value = serde_json::from_str(list_str).unwrap();
         assert_eq!(list_json["ok"], true);
         assert!(!list_json["accounts"].as_array().unwrap().is_empty());
-        unsafe { lez_wallet_free_string(list_ptr) };
+        unsafe { e_wallet_free_string(list_ptr) };
 
         // Connect dApp session
         let caller_str = CString::new("basecamp_demo").unwrap();
-        let conn_ptr = unsafe { lez_wallet_connect(engine, caller_str.as_ptr(), 1) };
+        let conn_ptr = unsafe { e_wallet_connect(engine, caller_str.as_ptr(), 1) };
         assert!(!conn_ptr.is_null());
         let conn_str = unsafe { CStr::from_ptr(conn_ptr) }.to_str().unwrap();
         let conn_json: serde_json::Value = serde_json::from_str(conn_str).unwrap();
         assert_eq!(conn_json["ok"], true);
         let session_id = conn_json["session_id"].as_str().unwrap().to_string();
-        unsafe { lez_wallet_free_string(conn_ptr) };
+        unsafe { e_wallet_free_string(conn_ptr) };
 
         let sess_cstr = CString::new(session_id.clone()).unwrap();
         let acc_cstr = CString::new(pub_account_id.clone()).unwrap();
@@ -2068,7 +2079,7 @@ mod tests {
 
         // Grant read access
         let grant_res_ptr = unsafe {
-            lez_wallet_grant_account(
+            e_wallet_grant_account(
                 engine,
                 sess_cstr.as_ptr(),
                 acc_cstr.as_ptr(),
@@ -2078,40 +2089,40 @@ mod tests {
         let grant_res_str = unsafe { CStr::from_ptr(grant_res_ptr) }.to_str().unwrap();
         let grant_json: serde_json::Value = serde_json::from_str(grant_res_str).unwrap();
         assert_eq!(grant_json["ok"], true);
-        unsafe { lez_wallet_free_string(grant_res_ptr) };
+        unsafe { e_wallet_free_string(grant_res_ptr) };
 
         // Request Identity Grant
         let id_grant_cstr = CString::new("IdentityRead").unwrap();
         let id_req_ptr = unsafe {
-            lez_wallet_request_identity_access(engine, sess_cstr.as_ptr(), id_grant_cstr.as_ptr())
+            e_wallet_request_identity_access(engine, sess_cstr.as_ptr(), id_grant_cstr.as_ptr())
         };
         let id_req_str = unsafe { CStr::from_ptr(id_req_ptr) }.to_str().unwrap();
         let id_req_json: serde_json::Value = serde_json::from_str(id_req_str).unwrap();
         assert_eq!(id_req_json["ok"], true);
-        unsafe { lez_wallet_free_string(id_req_ptr) };
+        unsafe { e_wallet_free_string(id_req_ptr) };
 
         // Get Identity Commitment
-        let comm_ptr = unsafe { lez_wallet_get_identity_commitment(engine, sess_cstr.as_ptr()) };
+        let comm_ptr = unsafe { e_wallet_get_identity_commitment(engine, sess_cstr.as_ptr()) };
         let comm_str = unsafe { CStr::from_ptr(comm_ptr) }.to_str().unwrap();
         let comm_json: serde_json::Value = serde_json::from_str(comm_str).unwrap();
         assert_eq!(comm_json["ok"], true);
         assert!(comm_json["commitment"].as_str().is_some());
-        unsafe { lez_wallet_free_string(comm_ptr) };
+        unsafe { e_wallet_free_string(comm_ptr) };
 
         // Derive Scoped Nullifier
         let scope_cstr = CString::new("forum_gov_alpha").unwrap();
         let null_ptr = unsafe {
-            lez_wallet_derive_scoped_nullifier(engine, sess_cstr.as_ptr(), scope_cstr.as_ptr())
+            e_wallet_derive_scoped_nullifier(engine, sess_cstr.as_ptr(), scope_cstr.as_ptr())
         };
         let null_str = unsafe { CStr::from_ptr(null_ptr) }.to_str().unwrap();
         let null_json: serde_json::Value = serde_json::from_str(null_str).unwrap();
         assert_eq!(null_json["ok"], true);
         assert_eq!(null_json["scope_id"], "forum_gov_alpha");
         assert!(null_json["nullifier"].as_str().is_some());
-        unsafe { lez_wallet_free_string(null_ptr) };
+        unsafe { e_wallet_free_string(null_ptr) };
 
         // Cleanup
-        unsafe { lez_wallet_engine_free(engine) };
+        unsafe { e_wallet_engine_free(engine) };
     }
 
     unsafe extern "C" fn mock_sync_reject_cb(
@@ -2131,58 +2142,58 @@ mod tests {
     #[test]
     fn test_ffi_approval_callback_sync_rejection() {
         let tmp_dir =
-            std::env::temp_dir().join(format!("test_lez_wallet_sync_rej_{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("test_e_wallet_sync_rej_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&tmp_dir);
         let path_str = CString::new(tmp_dir.to_str().unwrap()).unwrap();
 
-        let engine = unsafe { lez_wallet_engine_new(path_str.as_ptr()) };
+        let engine = unsafe { e_wallet_engine_new(path_str.as_ptr()) };
         assert!(!engine.is_null());
 
         let cb_res = unsafe {
-            lez_wallet_set_approval_callback(engine, mock_sync_reject_cb, std::ptr::null_mut())
+            e_wallet_set_approval_callback(engine, mock_sync_reject_cb, std::ptr::null_mut())
         };
-        unsafe { lez_wallet_free_string(cb_res) };
+        unsafe { e_wallet_free_string(cb_res) };
 
         let pass_str = CString::new("testpass123").unwrap();
-        let _ = unsafe { lez_wallet_create_wallet(engine, pass_str.as_ptr()) };
+        let _ = unsafe { e_wallet_create_wallet(engine, pass_str.as_ptr()) };
         let label = CString::new("alice").unwrap();
-        let acc_ptr = unsafe { lez_wallet_create_account_public(engine, label.as_ptr()) };
+        let acc_ptr = unsafe { e_wallet_create_account_public(engine, label.as_ptr()) };
         let acc_str = unsafe { CStr::from_ptr(acc_ptr) }.to_str().unwrap();
         let acc_json: serde_json::Value = serde_json::from_str(acc_str).unwrap();
         let from_acc = acc_json["account_id"].as_str().unwrap().to_string();
-        unsafe { lez_wallet_free_string(acc_ptr) };
+        unsafe { e_wallet_free_string(acc_ptr) };
 
         let label_bob = CString::new("bob").unwrap();
-        let bob_ptr = unsafe { lez_wallet_create_account_public(engine, label_bob.as_ptr()) };
+        let bob_ptr = unsafe { e_wallet_create_account_public(engine, label_bob.as_ptr()) };
         let bob_str = unsafe { CStr::from_ptr(bob_ptr) }.to_str().unwrap();
         let bob_json: serde_json::Value = serde_json::from_str(bob_str).unwrap();
         let to_acc = bob_json["account_id"].as_str().unwrap().to_string();
-        unsafe { lez_wallet_free_string(bob_ptr) };
+        unsafe { e_wallet_free_string(bob_ptr) };
 
         let caller = CString::new("test_dapp").unwrap();
-        let conn_ptr = unsafe { lez_wallet_connect(engine, caller.as_ptr(), 1) };
+        let conn_ptr = unsafe { e_wallet_connect(engine, caller.as_ptr(), 1) };
         let conn_str = unsafe { CStr::from_ptr(conn_ptr) }.to_str().unwrap();
         let conn_json: serde_json::Value = serde_json::from_str(conn_str).unwrap();
         let sid = conn_json["session_id"].as_str().unwrap().to_string();
-        unsafe { lez_wallet_free_string(conn_ptr) };
+        unsafe { e_wallet_free_string(conn_ptr) };
 
         let sess_cstr = CString::new(sid).unwrap();
         let acc_cstr = CString::new(from_acc).unwrap();
         let grant_cstr = CString::new("propose").unwrap();
         let g_res = unsafe {
-            lez_wallet_grant_account(
+            e_wallet_grant_account(
                 engine,
                 sess_cstr.as_ptr(),
                 acc_cstr.as_ptr(),
                 grant_cstr.as_ptr(),
             )
         };
-        unsafe { lez_wallet_free_string(g_res) };
+        unsafe { e_wallet_free_string(g_res) };
 
         let to_cstr = CString::new(to_acc).unwrap();
         let amt_cstr = CString::new("500").unwrap();
         let prop_ptr = unsafe {
-            lez_wallet_propose_native_transfer(
+            e_wallet_propose_native_transfer(
                 engine,
                 sess_cstr.as_ptr(),
                 acc_cstr.as_ptr(),
@@ -2194,78 +2205,76 @@ mod tests {
         let prop_json: serde_json::Value = serde_json::from_str(prop_str).unwrap();
         assert_eq!(prop_json["ok"], true);
         let req_id = prop_json["request_id"].as_str().unwrap().to_string();
-        unsafe { lez_wallet_free_string(prop_ptr) };
+        unsafe { e_wallet_free_string(prop_ptr) };
 
         std::thread::sleep(std::time::Duration::from_millis(50));
 
         let req_cstr = CString::new(req_id).unwrap();
-        let status_ptr = unsafe { lez_wallet_get_request_status(engine, req_cstr.as_ptr()) };
+        let status_ptr = unsafe { e_wallet_get_request_status(engine, req_cstr.as_ptr()) };
         let status_str = unsafe { CStr::from_ptr(status_ptr) }.to_str().unwrap();
         let status_json: serde_json::Value = serde_json::from_str(status_str).unwrap();
         assert_eq!(status_json["ok"], true);
         assert_eq!(status_json["status"], "rejected");
-        unsafe { lez_wallet_free_string(status_ptr) };
+        unsafe { e_wallet_free_string(status_ptr) };
 
-        unsafe { lez_wallet_engine_free(engine) };
+        unsafe { e_wallet_engine_free(engine) };
     }
 
     #[test]
     fn test_ffi_approval_callback_async_deferred_resolution() {
-        let tmp_dir = std::env::temp_dir().join(format!(
-            "test_lez_wallet_async_def_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let tmp_dir =
+            std::env::temp_dir().join(format!("test_e_wallet_async_def_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&tmp_dir);
         let path_str = CString::new(tmp_dir.to_str().unwrap()).unwrap();
 
-        let engine = unsafe { lez_wallet_engine_new(path_str.as_ptr()) };
+        let engine = unsafe { e_wallet_engine_new(path_str.as_ptr()) };
         assert!(!engine.is_null());
 
         let cb_res = unsafe {
-            lez_wallet_set_approval_callback(engine, mock_deferred_cb, std::ptr::null_mut())
+            e_wallet_set_approval_callback(engine, mock_deferred_cb, std::ptr::null_mut())
         };
-        unsafe { lez_wallet_free_string(cb_res) };
+        unsafe { e_wallet_free_string(cb_res) };
 
         let pass_str = CString::new("testpass123").unwrap();
-        let _ = unsafe { lez_wallet_create_wallet(engine, pass_str.as_ptr()) };
+        let _ = unsafe { e_wallet_create_wallet(engine, pass_str.as_ptr()) };
         let label = CString::new("alice").unwrap();
-        let acc_ptr = unsafe { lez_wallet_create_account_public(engine, label.as_ptr()) };
+        let acc_ptr = unsafe { e_wallet_create_account_public(engine, label.as_ptr()) };
         let acc_str = unsafe { CStr::from_ptr(acc_ptr) }.to_str().unwrap();
         let acc_json: serde_json::Value = serde_json::from_str(acc_str).unwrap();
         let from_acc = acc_json["account_id"].as_str().unwrap().to_string();
-        unsafe { lez_wallet_free_string(acc_ptr) };
+        unsafe { e_wallet_free_string(acc_ptr) };
 
         let label_bob = CString::new("bob").unwrap();
-        let bob_ptr = unsafe { lez_wallet_create_account_public(engine, label_bob.as_ptr()) };
+        let bob_ptr = unsafe { e_wallet_create_account_public(engine, label_bob.as_ptr()) };
         let bob_str = unsafe { CStr::from_ptr(bob_ptr) }.to_str().unwrap();
         let bob_json: serde_json::Value = serde_json::from_str(bob_str).unwrap();
         let to_acc = bob_json["account_id"].as_str().unwrap().to_string();
-        unsafe { lez_wallet_free_string(bob_ptr) };
+        unsafe { e_wallet_free_string(bob_ptr) };
 
         let caller = CString::new("test_dapp").unwrap();
-        let conn_ptr = unsafe { lez_wallet_connect(engine, caller.as_ptr(), 1) };
+        let conn_ptr = unsafe { e_wallet_connect(engine, caller.as_ptr(), 1) };
         let conn_str = unsafe { CStr::from_ptr(conn_ptr) }.to_str().unwrap();
         let conn_json: serde_json::Value = serde_json::from_str(conn_str).unwrap();
         let sid = conn_json["session_id"].as_str().unwrap().to_string();
-        unsafe { lez_wallet_free_string(conn_ptr) };
+        unsafe { e_wallet_free_string(conn_ptr) };
 
         let sess_cstr = CString::new(sid).unwrap();
         let acc_cstr = CString::new(from_acc).unwrap();
         let grant_cstr = CString::new("propose").unwrap();
         let g_res = unsafe {
-            lez_wallet_grant_account(
+            e_wallet_grant_account(
                 engine,
                 sess_cstr.as_ptr(),
                 acc_cstr.as_ptr(),
                 grant_cstr.as_ptr(),
             )
         };
-        unsafe { lez_wallet_free_string(g_res) };
+        unsafe { e_wallet_free_string(g_res) };
 
         let to_cstr = CString::new(to_acc).unwrap();
         let amt_cstr = CString::new("1000").unwrap();
         let prop_ptr = unsafe {
-            lez_wallet_propose_native_transfer(
+            e_wallet_propose_native_transfer(
                 engine,
                 sess_cstr.as_ptr(),
                 acc_cstr.as_ptr(),
@@ -2277,34 +2286,34 @@ mod tests {
         let prop_json: serde_json::Value = serde_json::from_str(prop_str).unwrap();
         assert_eq!(prop_json["ok"], true);
         let req_id = prop_json["request_id"].as_str().unwrap().to_string();
-        unsafe { lez_wallet_free_string(prop_ptr) };
+        unsafe { e_wallet_free_string(prop_ptr) };
 
         std::thread::sleep(std::time::Duration::from_millis(50));
 
         let req_cstr = CString::new(req_id.clone()).unwrap();
-        let status_ptr = unsafe { lez_wallet_get_request_status(engine, req_cstr.as_ptr()) };
+        let status_ptr = unsafe { e_wallet_get_request_status(engine, req_cstr.as_ptr()) };
         let status_str = unsafe { CStr::from_ptr(status_ptr) }.to_str().unwrap();
         let status_json: serde_json::Value = serde_json::from_str(status_str).unwrap();
         assert_eq!(status_json["ok"], true);
         assert_eq!(status_json["status"], "pending_approval");
-        unsafe { lez_wallet_free_string(status_ptr) };
+        unsafe { e_wallet_free_string(status_ptr) };
 
         // Host submits decision: 0 (Reject)
-        let dec_ptr = unsafe { lez_wallet_submit_approval_decision(engine, req_cstr.as_ptr(), 0) };
+        let dec_ptr = unsafe { e_wallet_submit_approval_decision(engine, req_cstr.as_ptr(), 0) };
         let dec_str = unsafe { CStr::from_ptr(dec_ptr) }.to_str().unwrap();
         let dec_json: serde_json::Value = serde_json::from_str(dec_str).unwrap();
         assert_eq!(dec_json["ok"], true);
-        unsafe { lez_wallet_free_string(dec_ptr) };
+        unsafe { e_wallet_free_string(dec_ptr) };
 
         std::thread::sleep(std::time::Duration::from_millis(50));
 
-        let status_ptr2 = unsafe { lez_wallet_get_request_status(engine, req_cstr.as_ptr()) };
+        let status_ptr2 = unsafe { e_wallet_get_request_status(engine, req_cstr.as_ptr()) };
         let status_str2 = unsafe { CStr::from_ptr(status_ptr2) }.to_str().unwrap();
         let status_json2: serde_json::Value = serde_json::from_str(status_str2).unwrap();
         assert_eq!(status_json2["ok"], true);
         assert_eq!(status_json2["status"], "rejected");
-        unsafe { lez_wallet_free_string(status_ptr2) };
+        unsafe { e_wallet_free_string(status_ptr2) };
 
-        unsafe { lez_wallet_engine_free(engine) };
+        unsafe { e_wallet_engine_free(engine) };
     }
 }
