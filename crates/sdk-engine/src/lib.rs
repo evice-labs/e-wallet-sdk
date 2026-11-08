@@ -10,6 +10,7 @@ pub mod decode;
 pub mod effects;
 pub mod error;
 pub mod identity;
+pub mod pow;
 pub mod queue;
 pub mod request;
 pub mod resolve;
@@ -21,10 +22,15 @@ pub mod verifier;
 // Re-export core types that consumers use constantly.
 pub use api::{DAppApi, OwnerApi, SdkEngine};
 pub use approval::{ApprovalDecision, ApprovalHandler};
+pub use client::prover_daemon::{
+    IpcRequest, IpcResponse, ProverDaemonClient, ProverJobStatus, ProverWorkerDaemon,
+    ProvingJobPayload,
+};
 pub use error::SdkError;
 pub use identity::{
     AttestationPayload, IdentityCommitment, IdentitySecret, RegistrationPayload, ScopedNullifier,
 };
+pub use pow::{ChannelDepositResult, PowBridgeManager, PowStatusView};
 pub use request::{PendingRequest, RequestId, RequestStatus};
 pub use session::{GrantKind, SessionGrant, SessionId};
 

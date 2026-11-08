@@ -13,6 +13,7 @@ lee_core.workspace = true
 common.workspace = true
 key_protocol.workspace = true
 sequencer_service_rpc.workspace = true
+testnet_initial_state.workspace = true
 
 # Third-party
 argon2.workspace = true
@@ -40,6 +41,10 @@ tokio.workspace = true
 url.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
+
+[[bin]]
+name = "lez-prover-daemon"
+path = "src/bin/lez-prover-daemon.rs"
 
 [features]
 default = []

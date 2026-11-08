@@ -35,6 +35,10 @@ pub struct SdkPersistentState {
     pub account_labels: std::collections::HashMap<String, String>,
     #[serde(default)]
     pub token_holdings: Vec<TokenHoldingEntry>,
+    #[serde(default)]
+    pub unbridged_l1_balance: u128,
+    #[serde(default)]
+    pub pow_blocks_mined: u64,
 }
 
 /// Atomic persistent store.
@@ -170,6 +174,8 @@ mod tests {
             lns_registry_id: None,
             account_labels: std::collections::HashMap::new(),
             token_holdings: Vec::new(),
+            unbridged_l1_balance: 0,
+            pow_blocks_mined: 0,
         };
         let data = serde_json::to_vec_pretty(&state).unwrap();
         fs::write(&bak_path, &data).unwrap();

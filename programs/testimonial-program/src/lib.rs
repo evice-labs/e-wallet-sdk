@@ -4,7 +4,7 @@ pub mod state;
 
 pub use error::TestimonialError;
 pub use instruction::TestimonialInstruction;
-pub use state::{derive_testimonial_pda_seed, TestimonialRecord, TestimonialState};
+pub use state::{TestimonialRecord, TestimonialState, derive_testimonial_pda_seed};
 
 use lee_core::program::{ReceiveInput, Response};
 
@@ -194,29 +194,33 @@ mod tests {
         let submitter2 = [2u8; 32];
         let submission_id = [42u8; 32];
 
-        assert!(process_instruction(
-            &mut state,
-            TestimonialInstruction::SubmitTestimonial {
-                submission_id,
-                text: "Review 1".into(),
-                username: Some("alice".into()),
-            },
-            submitter1,
-            0,
-        )
-        .is_ok());
+        assert!(
+            process_instruction(
+                &mut state,
+                TestimonialInstruction::SubmitTestimonial {
+                    submission_id,
+                    text: "Review 1".into(),
+                    username: Some("alice".into()),
+                },
+                submitter1,
+                0,
+            )
+            .is_ok()
+        );
 
-        assert!(process_instruction(
-            &mut state,
-            TestimonialInstruction::SubmitTestimonial {
-                submission_id,
-                text: "Review 2".into(),
-                username: Some("bob".into()),
-            },
-            submitter2,
-            0,
-        )
-        .is_ok());
+        assert!(
+            process_instruction(
+                &mut state,
+                TestimonialInstruction::SubmitTestimonial {
+                    submission_id,
+                    text: "Review 2".into(),
+                    username: Some("bob".into()),
+                },
+                submitter2,
+                0,
+            )
+            .is_ok()
+        );
 
         assert_eq!(state.count_distinct_submitters(&submission_id), 2);
     }

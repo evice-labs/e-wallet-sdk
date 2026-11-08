@@ -24,8 +24,9 @@ use std::time::Duration;
 #[derive(Parser)]
 #[command(
     name = "evice-wallet",
+    alias = "wallez",
     version,
-    about = "Evice Wallet SDK — Modular Wallet Engine for Logos Execution Zone (LEZ)"
+    about = "Evice Wallet SDK — Modular Wallet Engine for Logos Execution Zone"
 )]
 struct Cli {
     /// Data directory for wallet state and config (defaults to ~/.evice-wallet)

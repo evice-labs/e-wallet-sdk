@@ -93,11 +93,14 @@ lez-wallet-sdk/
 - In-memory cache with 5-minute TTL, cleared automatically upon wallet lock.
 - User-controllable toggle (`lns_enabled`) with graceful fallback to raw 32-byte account IDs.
 
-#### 7. Resilient Storage & Passphrase Rotation (`store.rs`, `api.rs`)
+#### 7. Resilient Storage, Passphrase Rotation & Cold-Start Encrypted Keystore (`store.rs`, `api.rs`)
 - Atomic persistence using write-then-rename (`.tmp` → target file) preventing state corruption during unexpected crashes or power loss.
 - Automatic `.bak` backup retention and fallback recovery.
 - Durable account alias mapping (`account_labels`) ensuring account renames overwrite prior aliases and survive restarts.
 - Master vault passphrase rotation (`OwnerApi::change_password`) verifying current credentials before re-encrypting persistent keystores.
+- **Graceful Encrypted Keystore Cold-Start:** When `wallet_storage.json` is encrypted on disk and the host initializes the engine with an empty passphrase at cold start, `SdkEngine::open_or_init` boots into an in-memory placeholder state with `store.state().locked = true` rather than failing with a null handle. Calling `OwnerApi::unlock(password)` decrypts and instantiates the full `WalletCore` and restores the root identity accountability secret.
+- **Automated Post-Transaction Key-Chain Tracking:** Privacy-preserving transactions awaiting block inclusion poll the sequencer (`poller().poll_tx`) and invoke `key_chain.follow_transaction` to advance unspent note commitments and nullifiers in `wallet_storage.json`.
+- **Chain Tip Synchronization for Refund Sweeping:** Creating or restoring wallets fast-forwards the sync cursor via `start_at_chain_tip()`, ensuring the wallet stays within `MAX_SWEEP_SCAN_BLOCKS = 64` to claim asynchronous fee refund notes automatically.
 
 #### 8. Identity Accountability & Accountable Pseudonymity (`identity/`)
 - Pure client-side zero-knowledge accountable pseudonymity derived from the master BIP-39 root seed (`lez/identity/v1/secret`).
@@ -253,6 +256,21 @@ cargo run --bin evice-wallet -- identity nullifier --scope "dao_voting_room"
 
 # Identity Accountability: Sign verifiable BIP-340 Schnorr attestation
 cargo run --bin evice-wallet -- identity attest --scope "dao_voting_room" --message "Vote YES on Proposal 42"
+```
+
+### Prover Worker Daemon (`lez-prover-daemon`)
+
+The standalone Zero-Knowledge background worker daemon offloads and decouples heavy RISC Zero zkVM proving from the wallet application, eliminating UI freezes and IPC timeouts (`callRemoteMethod timed out`):
+
+```bash
+# Launch the Prover Worker Daemon (Dual-Core friendly with cooperative execution)
+cargo run -p sdk-engine --bin lez-prover-daemon -- --socket /tmp/lez_prover.sock --threads 1
+
+# Check worker daemon health / ping
+cargo run -p sdk-engine --bin lez-prover-daemon -- --ping
+
+# Query worker daemon queue, active proving jobs, and resource status
+cargo run -p sdk-engine --bin lez-prover-daemon -- --status
 ```
 
 ### On-Chain Program Deployment & Testimonials (`lez-dispatcher`)
