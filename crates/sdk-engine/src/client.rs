@@ -709,7 +709,7 @@ pub mod prover_daemon {
             let _ = tokio::fs::remove_file(&self.socket_path).await;
             let listener = tokio::net::UnixListener::bind(&self.socket_path)?;
             log::info!(
-                "[lez-prover-daemon] Listening on UDS socket: {:?}",
+                "[e-prover-daemon] Listening on UDS socket: {:?}",
                 self.socket_path
             );
 
@@ -722,7 +722,7 @@ pub mod prover_daemon {
                         });
                     }
                     Err(e) => {
-                        log::warn!("[lez-prover-daemon] Accept error: {:?}", e);
+                        log::warn!("[e-prover-daemon] Accept error: {:?}", e);
                         tokio::time::sleep(Duration::from_millis(50)).await;
                     }
                 }
@@ -742,7 +742,7 @@ pub mod prover_daemon {
                 let resp = match serde_json::from_str::<IpcRequest>(trimmed) {
                     Ok(IpcRequest::Ping) => IpcResponse::Pong {
                         version: env!("CARGO_PKG_VERSION").to_string(),
-                        daemon: "lez-prover-daemon".to_string(),
+                        daemon: "e-prover-daemon".to_string(),
                     },
                     Ok(IpcRequest::Status) => IpcResponse::Status {
                         active_jobs: self.active_workers.load(Ordering::Relaxed),
@@ -896,7 +896,7 @@ pub mod prover_daemon {
         }
     }
 
-    /// CLI binary entrypoint for `lez-prover-daemon`.
+    /// CLI binary entrypoint for `e-prover-daemon`.
     pub fn daemon_main() {
         let args: Vec<String> = std::env::args().collect();
         let socket_path = args
@@ -919,14 +919,11 @@ pub mod prover_daemon {
                 let client = ProverDaemonClient::new(Some(socket_path.clone()));
                 match client.ping().await {
                     Ok(true) => {
-                        println!("[✓] lez-prover-daemon is active on {:?}", socket_path);
+                        println!("[✓] e-prover-daemon is active on {:?}", socket_path);
                         std::process::exit(0);
                     }
                     _ => {
-                        eprintln!(
-                            "[✗] lez-prover-daemon is NOT reachable on {:?}",
-                            socket_path
-                        );
+                        eprintln!("[✗] e-prover-daemon is NOT reachable on {:?}", socket_path);
                         std::process::exit(1);
                     }
                 }
@@ -976,7 +973,7 @@ pub mod prover_daemon {
                     }
                 }
                 _ = tokio::signal::ctrl_c() => {
-                    println!("\n[!] Shutting down lez-prover-daemon gracefully...");
+                    println!("\n[!] Shutting down e-prover-daemon gracefully...");
                     let _ = tokio::fs::remove_file(&socket_path).await;
                 }
             }

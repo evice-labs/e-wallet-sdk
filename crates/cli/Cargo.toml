@@ -3,15 +3,15 @@ name = "evice-wallet-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "CLI for the Evice Wallet SDK (Logos Execution Zone)"
+description = "CLI for the Evice Wallet SDK"
 
 [[bin]]
 name = "evice-wallet"
 path = "src/main.rs"
 
 [[bin]]
-name = "lez-wallet"
-path = "src/bin/lez-wallet.rs"
+name = "e-wallet"
+path = "src/bin/e-wallet.rs"
 
 [dependencies]
 sdk-engine.workspace = true

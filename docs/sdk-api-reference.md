@@ -1,6 +1,6 @@
 ## Evice Wallet SDK — API Reference Manual
 
-> **Version:** Draft v0.1   
+> **Version:** Draft v0.2  
 > **Target Audience:** dApp Developers, Core Module (`wallet-provider`) Integrators, and Native Client Engineers.
 
 ## 1. Architectural Overview & API Surfaces
@@ -11,7 +11,7 @@ The Evice Wallet SDK exposes two distinct high-level interfaces on top of the he
    Session-scoped interface accessed by dApps or external consumers. All methods require a valid `SessionId` and enforce granular, per-account privilege checks (`GrantKind`).
 2. **`OwnerApi` (Privileged Wallet Controller Surface):**  
    Privileged management interface intended for the wallet host environment (CLI, Desktop QML UI, or Core Module). Governs key generation, storage locking, account derivation, and access grant issuance.
-3. **`C-ABI FFI Layer` (`crates/sdk-ffi`, `include/lez_wallet_sdk.h`):**  
+3. **`C-ABI FFI Layer` (`crates/sdk-ffi`, `include/e_wallet_sdk.h`):**  
    C-compatible linkage layer with opaque engine handles, ABI-stable JSON serialization, panic boundaries (`catch_unwind`), and non-blocking approval callback dispatch.
 
 ```
@@ -25,9 +25,9 @@ The Evice Wallet SDK exposes two distinct high-level interfaces on top of the he
                   ▼                                   ▼
 ┌────────────────────────────────────────────────────────────────────────┐
 │                      C-ABI INTEROPERABILITY LAYER                      │
-│   `crates/sdk-ffi` (Header: `include/lez_wallet_sdk.h`)                 │
+│   `crates/sdk-ffi` (Header: `include/e_wallet_sdk.h`)                 │
 │   • Opaque Pointer: `*mut FfiSdkEngine`                                │
-│   • Memory Lifecycle: `lez_wallet_free_string(char*)`                  │
+│   • Memory Lifecycle: `e_wallet_free_string(char*)`                  │
 │   • Non-Blocking Bridge: `FfiApprovalCallback` + Deferred Submission   │
 └──────────────────────────────────┬─────────────────────────────────────┘
                                    ▼
@@ -65,13 +65,13 @@ All structured data across the C-ABI FFI boundary is formatted as UTF-8 encoded 
 ```
 
 ### Memory Management Rule
-Any `*mut c_char` returned by `lez_wallet_*` functions is allocated by Rust using standard heap allocators. The caller **must** deallocate it by passing the pointer to `lez_wallet_free_string(ptr)`. Passing a null pointer is safe (no-op).
+Any `*mut c_char` returned by `e_wallet_*` functions is allocated by Rust using standard heap allocators. The caller **must** deallocate it by passing the pointer to `e_wallet_free_string(ptr)`. Passing a null pointer is safe (no-op).
 
 ## 3. `DAppApi` Reference Specification
 
 ### 3.1 `sdk_info`
 Retrieves engine metadata, API compatibility version, and runtime status.
-- **FFI Signature:** `lez_wallet_sdk_info(engine: *mut FfiSdkEngine) -> *mut c_char`
+- **FFI Signature:** `e_wallet_sdk_info(engine: *mut FfiSdkEngine) -> *mut c_char`
 - **Session Required:** No.
 - **Response Format:**
 ```json
@@ -87,7 +87,7 @@ Retrieves engine metadata, API compatibility version, and runtime status.
 
 ### 3.2 `connect`
 Initializes an isolated, timestamped dApp session with protocol version handshake.
-- **FFI Signature:** `lez_wallet_connect(engine: *mut FfiSdkEngine, caller_identity: *const c_char, api_version: u32) -> *mut c_char`
+- **FFI Signature:** `e_wallet_connect(engine: *mut FfiSdkEngine, caller_identity: *const c_char, api_version: u32) -> *mut c_char`
 - **Parameters:**
   - `caller_identity`: Human-readable identifier of the calling dApp (e.g. `"uniswap.lez"` or `"portal-app"`).
   - `api_version`: Expected protocol version (currently `1`).
@@ -101,15 +101,15 @@ Initializes an isolated, timestamped dApp session with protocol version handshak
 
 ### 3.3 `disconnect`
 Explicitly closes an active session, invalidating all associated ephemeral grants.
-- **FFI Signature:** `lez_wallet_disconnect(engine: *mut FfiSdkEngine, session_id: *const c_char) -> *mut c_char`
+- **FFI Signature:** `e_wallet_disconnect(engine: *mut FfiSdkEngine, session_id: *const c_char) -> *mut c_char`
 - **Response Format:** `{"ok": true}`
 
 ### 3.4 `request_accounts` & `list_accounts`
 Returns accounts authorized for the given session.
 - **FFI Signatures:**
-  - `lez_wallet_request_accounts(engine: *mut FfiSdkEngine, session_id: *const c_char) -> *mut c_char`
-  - `lez_wallet_list_accounts(engine: *mut FfiSdkEngine, session_id: *const c_char) -> *mut c_char`
-  - `lez_wallet_list_all_accounts(engine: *mut FfiSdkEngine) -> *mut c_char` *(Privileged Owner API)*
+  - `e_wallet_request_accounts(engine: *mut FfiSdkEngine, session_id: *const c_char) -> *mut c_char`
+  - `e_wallet_list_accounts(engine: *mut FfiSdkEngine, session_id: *const c_char) -> *mut c_char`
+  - `e_wallet_list_all_accounts(engine: *mut FfiSdkEngine) -> *mut c_char` *(Privileged Owner API)*
 - **Privilege Required:** `request_accounts` & `list_accounts` require active session grants. `list_all_accounts` is an owner call querying all derived accounts.
 - **Response Format (AccountViewDto):**
 ```json
@@ -140,7 +140,7 @@ Returns accounts authorized for the given session.
 
 ### 3.5 `get_balance`
 Fetches the balance of an authorized account in native atomic units.
-- **FFI Signature:** `lez_wallet_get_balance(engine: *mut FfiSdkEngine, session_id: *const c_char, account_id: *const c_char) -> *mut c_char`
+- **FFI Signature:** `e_wallet_get_balance(engine: *mut FfiSdkEngine, session_id: *const c_char, account_id: *const c_char) -> *mut c_char`
 - **Privilege Required:** `GrantKind::Read`.
 - **Factual Balance Semantics:**
   - For **Transparent/Public** accounts: Queries live sequencer account state and returns on-chain native balance.
@@ -157,7 +157,7 @@ Fetches the balance of an authorized account in native atomic units.
 Proposes a native token transfer. Computes an immutable intent hash and dispatches for user approval.
 - **FFI Signature:**
   ```c
-  char* lez_wallet_propose_native_transfer(
+  char* e_wallet_propose_native_transfer(
       FfiSdkEngine* engine,
       const char* session_id,
       const char* from_account,
@@ -180,7 +180,7 @@ Proposes a native token transfer. Computes an immutable intent hash and dispatch
 Proposes a transfer of custom fungible tokens defined under the LEZ token program.
 - **FFI Signature:**
   ```c
-  char* lez_wallet_propose_token_transfer(
+  char* e_wallet_propose_token_transfer(
       FfiSdkEngine* engine,
       const char* session_id,
       const char* from_account,
@@ -202,8 +202,8 @@ Proposes a transfer of custom fungible tokens defined under the LEZ token progra
 ### 3.8 `get_request_status` & `cancel_request`
 Monitors or cancels the lifecycle of an immutable request proposal.
 - **FFI Signatures:**
-  - `lez_wallet_get_request_status(engine: *mut FfiSdkEngine, request_id: *const c_char) -> *mut c_char`
-  - `lez_wallet_cancel_request(engine: *mut FfiSdkEngine, request_id: *const c_char) -> *mut c_char`
+  - `e_wallet_get_request_status(engine: *mut FfiSdkEngine, request_id: *const c_char) -> *mut c_char`
+  - `e_wallet_cancel_request(engine: *mut FfiSdkEngine, request_id: *const c_char) -> *mut c_char`
 - **Possible Statuses:**
   - `pending_approval`: Waiting for user confirmation.
   - `approved`: Confirmed by user, preparing on-chain submission.
@@ -221,7 +221,7 @@ Monitors or cancels the lifecycle of an immutable request proposal.
 
 ### 3.8a `propose_contract_call`
 Proposes an explicit smart contract execution specifying target program ID, payer account ID, account mentions, calldata, and human-readable description.
-- **FFI Signature:** `lez_wallet_propose_contract_call(engine: *mut FfiSdkEngine, session_id: *const c_char, program_id: *const c_char, payer_id: *const c_char, mentions_json: *const c_char, calldata_hex: *const c_char, description: *const c_char) -> *mut c_char`
+- **FFI Signature:** `e_wallet_propose_contract_call(engine: *mut FfiSdkEngine, session_id: *const c_char, program_id: *const c_char, payer_id: *const c_char, mentions_json: *const c_char, calldata_hex: *const c_char, description: *const c_char) -> *mut c_char`
 - **Parameters:**
   - `session_id`: Active session identifier.
   - `program_id`: Target smart contract Base58 AccountId.
@@ -246,18 +246,18 @@ Proposes an explicit smart contract execution specifying target program ID, paye
 Queries and registers fungible token program asset holdings across sessions:
 - **`list_token_holdings(session_id)`:**
   Lists tracked token holdings accessible to the session.
-  - **FFI Signature:** `lez_wallet_list_token_holdings(engine, session_id) -> *mut c_char`
+  - **FFI Signature:** `e_wallet_list_token_holdings(engine, session_id) -> *mut c_char`
   - **Response:** `{"ok": true, "tokens": [{"holding_id": "...", "definition_id": "...", "symbol": "LOGOS", "name": "Logos", "is_shielded": false}]}`
 - **`list_all_token_holdings()`:**
   Privileged Owner API returning all token holdings tracked by the engine keystore.
-  - **FFI Signature:** `lez_wallet_list_all_token_holdings(engine) -> *mut c_char`
+  - **FFI Signature:** `e_wallet_list_all_token_holdings(engine) -> *mut c_char`
 - **`register_token_holding(holding_id, definition_id, symbol, name, is_shielded)`:**
   Privileged Owner API registering a new token holding, persisting it atomically to disk (`token_holdings: Vec<TokenHoldingEntry>`).
-  - **FFI Signature:** `lez_wallet_register_token_holding(engine, holding_id, definition_id, symbol, name, is_shielded) -> *mut c_char`
+  - **FFI Signature:** `e_wallet_register_token_holding(engine, holding_id, definition_id, symbol, name, is_shielded) -> *mut c_char`
 
 ### 3.9 `resolve_name`
 Resolves a human-readable `.lez` domain name using the clean-room Logos Name Service (LNS) client against live on-chain registry state.
-- **FFI Signature:** `lez_wallet_resolve_name(engine: *mut FfiSdkEngine, session_id: *const c_char, name: *const c_char) -> *mut c_char`
+- **FFI Signature:** `e_wallet_resolve_name(engine: *mut FfiSdkEngine, session_id: *const c_char, name: *const c_char) -> *mut c_char`
 - **Parameters:**
   - `session_id`: Active authorized session identifier.
   - `name`: Target `.lez` domain name (e.g. `"alice.lez"` or `"jef.lez"`).
@@ -294,7 +294,7 @@ Client-side primitives for accountable pseudonymity:
 
 ### 3.11 `resolve_account`
 Resolves an arbitrary account identifier string into structured metadata:
-- **FFI Signature:** `lez_wallet_resolve_account(engine: *mut FfiSdkEngine, input: *const c_char) -> *mut c_char`
+- **FFI Signature:** `e_wallet_resolve_account(engine: *mut FfiSdkEngine, input: *const c_char) -> *mut c_char`
 - **Supported Formats:**
   1. **LNS Domain Names:** `*.lez` (e.g. `"alice.lez"`) via live on-chain name resolution.
   2. **Prefixed Public Addresses:** `"Public/<base58_address>"` or `"public/<base58_address>"`.
@@ -318,32 +318,32 @@ Privileged interface restricted to the wallet owner / host environment:
 
 | Method Signature (C-ABI) | Description | Parameters |
 |---|---|---|
-| `lez_wallet_create_wallet(engine, password)` | Generates a new master BIP-39 mnemonic phrase and initializes encrypted storage. | `password`: Non-empty master passphrase. |
-| `lez_wallet_restore_wallet(engine, mnemonic, password)` | Restores an existing wallet from a 12- or 24-word recovery phrase. | `mnemonic`: Normalized space-delimited phrase; `password`: New passphrase. |
-| `lez_wallet_lock(engine)` | Immediately zeroes key material in memory and clears cached session states. | None. |
-| `lez_wallet_unlock(engine, password)` | Re-derives encryption keys and unlocks local storage. | `password`: Master passphrase. |
-| `lez_wallet_change_password(engine, old_password, new_password)` | Re-encrypts keystore storage and updates the master passphrase. | `old_password`: Current passphrase; `new_password`: New passphrase. |
-| `lez_wallet_create_account_public(engine, label)` | Derives a new transparent public account (`Public/...`). | `label`: Optional UTF-8 display alias. |
-| `lez_wallet_create_account_private(engine, label)` | Derives a new shielded zero-knowledge private account. | `label`: Optional UTF-8 display alias. |
-| `lez_wallet_list_all_accounts(engine)` | Lists all registered accounts with labels, types, and balances. | None. |
-| `lez_wallet_grant_account(engine, session_id, account_id, grant_kind)` | Issues an explicit privilege grant to an active dApp session. | `grant_kind`: `"read"` or `"propose"`. |
-| `lez_wallet_revoke_session(engine, session_id)` | Immediately revokes an authorized session and all its grants. | `session_id`: Target session identifier. |
-| `lez_wallet_set_account_label(engine, account_id, label)` | Renames or sets a human-readable alias on an account, persisting it atomically to override old aliases. | `account_id`: Target account; `label`: New alias string. |
-| `lez_wallet_pow_start_mining(engine)` | Starts the EmPoWer Proof-of-Work mining daemon and L1 auto-claim (`PUT /pow/mining/start`, `PUT /pow/auto-claim/start`) alongside the local SHA-256 PoW worker. | None. |
-| `lez_wallet_pow_stop_mining(engine)` | Stops the EmPoWer Proof-of-Work mining daemon (`PUT /pow/mining/stop`) and halts the local SHA-256 PoW worker. | None. |
-| `lez_wallet_pow_status(engine)` | Queries live EmPoWer mining telemetry (`GET /pow/status`, `GET /pow/rewards/claimable`) and persistent unbridged L1 reward balance (`unbridged_l1_balance`). | None. |
-| `lez_wallet_channel_deposit(engine, recipient_account, amount_str)` | Bridges unbridged L1 PoW rewards to a **Transparent/Public** LEZ account via L1 `/pow/claim` + `/channel/deposit` (`bridge_core::DepositMetadata`) and on-chain LEZ settlement. Enforces the Asymmetric Deposit Trap guardrail (rejects `Private` destinations). | `recipient_account`: Destination Public AccountId; `amount_str`: Raw atomic units string. |
+| `e_wallet_create_wallet(engine, password)` | Generates a new master BIP-39 mnemonic phrase and initializes encrypted storage. | `password`: Non-empty master passphrase. |
+| `e_wallet_restore_wallet(engine, mnemonic, password)` | Restores an existing wallet from a 12- or 24-word recovery phrase. | `mnemonic`: Normalized space-delimited phrase; `password`: New passphrase. |
+| `e_wallet_lock(engine)` | Immediately zeroes key material in memory and clears cached session states. | None. |
+| `e_wallet_unlock(engine, password)` | Re-derives encryption keys and unlocks local storage. | `password`: Master passphrase. |
+| `e_wallet_change_password(engine, old_password, new_password)` | Re-encrypts keystore storage and updates the master passphrase. | `old_password`: Current passphrase; `new_password`: New passphrase. |
+| `e_wallet_create_account_public(engine, label)` | Derives a new transparent public account (`Public/...`). | `label`: Optional UTF-8 display alias. |
+| `e_wallet_create_account_private(engine, label)` | Derives a new shielded zero-knowledge private account. | `label`: Optional UTF-8 display alias. |
+| `e_wallet_list_all_accounts(engine)` | Lists all registered accounts with labels, types, and balances. | None. |
+| `e_wallet_grant_account(engine, session_id, account_id, grant_kind)` | Issues an explicit privilege grant to an active dApp session. | `grant_kind`: `"read"` or `"propose"`. |
+| `e_wallet_revoke_session(engine, session_id)` | Immediately revokes an authorized session and all its grants. | `session_id`: Target session identifier. |
+| `e_wallet_set_account_label(engine, account_id, label)` | Renames or sets a human-readable alias on an account, persisting it atomically to override old aliases. | `account_id`: Target account; `label`: New alias string. |
+| `e_wallet_pow_start_mining(engine)` | Starts the EmPoWer Proof-of-Work mining daemon and L1 auto-claim (`PUT /pow/mining/start`, `PUT /pow/auto-claim/start`) alongside the local SHA-256 PoW worker. | None. |
+| `e_wallet_pow_stop_mining(engine)` | Stops the EmPoWer Proof-of-Work mining daemon (`PUT /pow/mining/stop`) and halts the local SHA-256 PoW worker. | None. |
+| `e_wallet_pow_status(engine)` | Queries live EmPoWer mining telemetry (`GET /pow/status`, `GET /pow/rewards/claimable`) and persistent unbridged L1 reward balance (`unbridged_l1_balance`). | None. |
+| `e_wallet_channel_deposit(engine, recipient_account, amount_str)` | Bridges unbridged L1 PoW rewards to a **Transparent/Public** LEZ account via L1 `/pow/claim` + `/channel/deposit` (`bridge_core::DepositMetadata`) and on-chain LEZ settlement. Enforces the Asymmetric Deposit Trap guardrail (rejects `Private` destinations). | `recipient_account`: Destination Public AccountId; `amount_str`: Raw atomic units string. |
 
 ### 4.1 Vault Passphrase Rotation (`change_password`)
 Allows the wallet owner to change the master encryption passphrase protecting local keystore storage:
-- **FFI Signature:** `lez_wallet_change_password(engine: *mut FfiSdkEngine, old_password: *const c_char, new_password: *const c_char) -> *mut c_char`
+- **FFI Signature:** `e_wallet_change_password(engine: *mut FfiSdkEngine, old_password: *const c_char, new_password: *const c_char) -> *mut c_char`
 - **Authentication:** Validates `old_password` against current storage credentials before re-encrypting.
 - **Success Response:** `{"ok": true}`
 - **Error Response:** `{"ok": false, "error": "InvalidPassword"}` when `old_password` fails validation.
 
 ### 4.2 Account Alias & Label Management (`set_account_label`)
 Associates a friendly display name with an account:
-- **FFI Signature:** `lez_wallet_set_account_label(engine: *mut FfiSdkEngine, account_id: *const c_char, label: *const c_char) -> *mut c_char`
+- **FFI Signature:** `e_wallet_set_account_label(engine: *mut FfiSdkEngine, account_id: *const c_char, label: *const c_char) -> *mut c_char`
 - **Persistence:** Saved atomically into `SdkPersistentState` (`account_labels`), ensuring that renaming an account replaces previously bound labels and survives process restarts.
 - **Success Response:** `{"ok": true}`
 
@@ -355,20 +355,20 @@ To eliminate UI freezes and support asynchronous desktop dialogs (e.g. Qt/QML mo
 ```c
 int on_approval_prompt(const char* prompt_json, void* user_data);
 
-lez_wallet_set_approval_callback(engine, on_approval_prompt, host_context);
+e_wallet_set_approval_callback(engine, on_approval_prompt, host_context);
 ```
 
 ### Step 2: Callback Return Semantics
 When an action requiring user consent occurs (e.g. `propose_native_transfer`):
 - Return `1`: **Synchronous Approve** (immediate confirmation).
 - Return `0`: **Synchronous Reject** (immediate denial).
-- Return `-1`: **Asynchronous / Deferred** (host opens a modal dialog; resolution occurs later via `lez_wallet_submit_approval_decision`).
+- Return `-1`: **Asynchronous / Deferred** (host opens a modal dialog; resolution occurs later via `e_wallet_submit_approval_decision`).
 
 ### Step 3: Deferred Resolution
 Once the user confirms or dismisses the UI dialog:
 ```c
 // decision: 1 for Approve, 0 for Reject
-lez_wallet_submit_approval_decision(engine, request_id, 1);
+e_wallet_submit_approval_decision(engine, request_id, 1);
 ```
 
 ## 6. Error Codes & Diagnostics

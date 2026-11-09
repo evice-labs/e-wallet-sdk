@@ -267,7 +267,7 @@ async fn main() -> Result<()> {
         println!("{}", json!(report));
     } else {
         println!("╔══════════════════════════════════════════════════════════╗");
-        println!("║           EVICE TESTIMONIAL ADOPTION AUDIT               ║");
+        println!("║                 TESTIMONIAL ADOPTION AUDIT               ║");
         println!("╠══════════════════════════════════════════════════════════╣");
         println!(
             "║ Submission ID:      {:<36} ║",

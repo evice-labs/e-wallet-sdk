@@ -3,7 +3,7 @@ name = "sdk-engine"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Evice Wallet SDK core engine — sessions, approval, requests, and wallet orchestration for Logos Execution Zone"
+description = "Evice Wallet SDK core engine. Sessions, approval, requests, and wallet orchestration for Logos Execution Zone"
 
 [dependencies]
 # LEZ upstream
@@ -43,8 +43,8 @@ uuid.workspace = true
 zeroize.workspace = true
 
 [[bin]]
-name = "lez-prover-daemon"
-path = "src/bin/lez-prover-daemon.rs"
+name = "e-prover-daemon"
+path = "src/bin/e-prover-daemon.rs"
 
 [features]
 default = []
