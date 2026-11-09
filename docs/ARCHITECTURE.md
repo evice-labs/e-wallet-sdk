@@ -486,7 +486,7 @@ To ensure seamless, resilient interoperation between modern SDK engine traits an
 3. **Pure Upstream Commit Pinning:**
    - All external LEZ dependencies in `Cargo.toml` are pinned to explicit Git commits (`rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142"`) with zero local directory patches or workspace overrides.
 
-### 4.15 Protocol State Separation & Invariant Guardrails (`docs/protocol-compatibility-and-invariants.md`)
+### 4.15 Protocol State Separation & Invariant Guardrails
 
 To ensure safe operation across different LEZ network iterations and protect user funds from irreversible protocol-level traps:
 
@@ -500,7 +500,6 @@ To ensure safe operation across different LEZ network iterations and protect use
    - `propose_native_transfer` honors explicit `Public/` and `Private/` prefixes via `from_privacy: Option<AccountPrivacy>` and validates destination prefixes so `Public ➝ Private` is never misrouted into a transparent transfer.
 3. **Downstream Safety Guardrails:**
    - The SDK Engine and consumer modules implement pre-flight validation guards to prevent users from executing invalid self-shielding or unspendable transparent deposits to private accounts.
-   - For complete formal analysis, refer to [protocol-compatibility-and-invariants.md](protocol-compatibility-and-invariants.md).
 
 ### 4.16 EmPoWer Proof-of-Work Mining & L1 ➝ LEZ Channel Bridge (`pow.rs`)
 
@@ -549,7 +548,7 @@ To guarantee smooth, non-blocking desktop UX on resource-constrained hardware (e
 | **Passphrase Rotation Vulnerability**                  | Validates current password against on-disk keystore before re-encrypting with new credentials; prevents unauthorized passphrase resets.                                           | `api.rs` (`change_password`)                                               |
 | **Unregistered LNS Handle Fund Loss**                  | Pre-flight destination resolution verifies LNS records exist on-chain and hold valid public receiving keys before transaction creation; rejects unresolvable domains immediately. | `api.rs`, `resolve/lns.rs`                                                 |
 | **Tampered / Forged LNS Profiles**                     | Authenticated AES-256-GCM tag verification bound to associated data `logos-names/v5/record`, followed by strict `profile.name == input_name` consistency checking.                | `resolve/lns.rs`                                                           |
-| **Asymmetric Deposit Trap (Private Shard Asset Lock)** | Pre-flight transaction validation rejects transparent self-shielding attempts from private accounts; prevents permanent asset lockups on transparent shards.                      | `v03_compat.rs`, `api.rs`, `docs/protocol-compatibility-and-invariants.md` |
+| **Asymmetric Deposit Trap (Private Shard Asset Lock)** | Pre-flight transaction validation rejects transparent self-shielding attempts from private accounts; prevents permanent asset lockups on transparent shards.                      | `v03_compat.rs`, `api.rs` |
 
 ### 5.2 Privacy Guarantees
 

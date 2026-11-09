@@ -45,7 +45,6 @@ e-wallet-sdk/
 ├── integration-tests/          # End-to-end integration test suites
 ├── docs/                       # Specifications and technical documentation
 │   ├── ARCHITECTURE.md         # Comprehensive system architecture & technical specification
-│   ├── protocol-compatibility-and-invariants.md # Protocol state separation, circuit invariants & v0.3/v0.4 compatibility
 │   ├── sdk-api-reference.md    # Complete SDK API reference & JSON wire format
 │   ├── program-deployment.md   # Smart contract compilation, deployment & dispatcher guide
 │   └── testnet-deployment-evidence.md # On-chain testnet deployment logs, block heights & transaction hashes
@@ -177,11 +176,12 @@ e-wallet-sdk/
 - **Idiomatic Upstream Config Overrides:** Injects the effective gas limit into upstream `WalletCore` via `WalletConfigOverrides` during `open_or_init` and `create_wallet`, ensuring active in-memory transactions match on-chain fee requirements.
 - **Dynamic Configuration & C-ABI FFI:** Exposes `get_gas_limit()` and `set_gas_limit(limit: u64)` across SDK Engine and C FFI (`e_wallet_get_gas_limit`, `e_wallet_set_gas_limit`) with persistent override storage in `sdk_state.json`.
 
-#### 16. Protocol Invariants & State Transition Guardrails (`docs/protocol-compatibility-and-invariants.md`)
+#### 16. Testnet v0.3 & v0.4 Sequencer Compatibility Layer (`client.rs`, `v03_compat.rs`)
 
-- **Dual Cryptographic Account Boundaries:** Distinguishes elliptic-curve authenticated Public accounts from lattice-based (ML-KEM-768) and SNARK-based (BabyJubjub/Poseidon) Private accounts, documenting the impossibility of producing ECDSA signatures from private account keys.
-- **Asymmetric Deposit Trap Mitigation:** Identifies the protocol-level lockup that occurs when transparent native balances are deposited into private account shards (`Public/<id>`), providing architectural guardrails for downstream client applications.
-- **Comprehensive Technical Reference:** For in-depth architectural and mathematical analysis, see [docs/protocol-compatibility-and-invariants.md](docs/protocol-compatibility-and-invariants.md).
+- **Multi-Endpoint RPC Resilience:** Implements `TestnetSequencerClient` featuring dynamic RPC endpoint failover with jittered exponential backoff across configured sequencer nodes.
+- **Wire-Format Normalization:** Dynamically normalizes wire-format discrepancies between LEZ v0.3 (`shards`) and v0.4 (`actor_states`), preventing deserialization crashes on live networks.
+- **Automatic Protocol Version Detection:** Probes sequencer capabilities at startup and caches protocol modes (`V03ShardModel` vs `V04ActorModel`) for transparent block, transaction, and publication RPC routing.
+- **Legacy Storage Migration (`v03_compat`):** Provides automated migration facilities upgrading v0.3 wallet structures into v0.4 Actor-model format without requiring wallet re-derivation.
 
 ## Quick Start
 
