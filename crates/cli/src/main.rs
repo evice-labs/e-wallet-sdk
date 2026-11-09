@@ -283,15 +283,17 @@ fn get_password(cli_pw: &Option<String>, prompt_text: &str) -> Result<String> {
     if let Some(p) = cli_pw.as_ref() {
         return Ok(p.clone());
     }
-    if let Ok(p) = std::env::var("EVICE_WALLET_PASSWORD")
-        && !p.is_empty()
-    {
-        return Ok(p);
-    }
-    if let Ok(p) = std::env::var("LEZ_WALLET_PASSWORD")
-        && !p.is_empty()
-    {
-        return Ok(p);
+    for var in &[
+        "e_wallet_PASSWORD",
+        "E_WALLET_PASSWORD",
+        "EVICE_WALLET_PASSWORD",
+        "LEZ_WALLET_PASSWORD",
+    ] {
+        if let Ok(p) = std::env::var(var)
+            && !p.is_empty()
+        {
+            return Ok(p);
+        }
     }
     let prompt = format!("{}: ", prompt_text);
     let pass = rpassword::prompt_password(prompt)
@@ -304,10 +306,17 @@ fn get_new_wallet_password(cli_pw: &Option<String>) -> Result<String> {
     if let Some(p) = cli_pw.as_ref() {
         return Ok(p.clone());
     }
-    if let Ok(p) = std::env::var("LEZ_WALLET_PASSWORD")
-        && !p.is_empty()
-    {
-        return Ok(p);
+    for var in &[
+        "e_wallet_PASSWORD",
+        "E_WALLET_PASSWORD",
+        "EVICE_WALLET_PASSWORD",
+        "LEZ_WALLET_PASSWORD",
+    ] {
+        if let Ok(p) = std::env::var(var)
+            && !p.is_empty()
+        {
+            return Ok(p);
+        }
     }
     let p1 = rpassword::prompt_password("Enter password for new wallet: ")
         .context("Failed to read password from terminal")?;

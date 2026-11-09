@@ -527,8 +527,6 @@ impl SdkEngine {
                 }
                 Err(e) => return Err(SdkError::Internal(e)),
             }
-        } else if password.is_empty() {
-            return Err(SdkError::WalletNotInitialized);
         } else {
             let (wallet, _mnemonic) = WalletCore::new_init_storage_with_client(
                 config.wallet_config_path.clone(),
