@@ -8,7 +8,10 @@
 //! - **[`OwnerApi`]** — callable only by the wallet UI (privileged).
 
 use bip39::Mnemonic;
+use jsonrpsee::core::client::ClientT;
+use jsonrpsee::rpc_params;
 use lee::AccountId;
+use lee_core::BlockId;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -2561,21 +2564,39 @@ impl OwnerApi for SdkEngine {
             let w = self.wallet.lock().await;
             w.client().clone()
         };
-        let res = client.get_transaction(hash).await.map_err(|e| {
-            SdkError::Internal(anyhow::anyhow!("Sequencer get_transaction error: {:?}", e))
-        })?;
 
-        match res {
-            Some((_tx, block_id)) => Ok(TransactionStatusView {
+        let query_res: Result<Option<(serde_json::Value, BlockId)>, _> = client
+            .inner()
+            .request("getTransaction", rpc_params![hash])
+            .await;
+
+        match query_res {
+            Ok(Some((_val, block_id))) => Ok(TransactionStatusView {
                 tx_hash: tx_hash_str.to_string(),
                 status: "confirmed".to_string(),
                 block_id: Some(block_id),
             }),
-            None => Ok(TransactionStatusView {
+            Ok(None) => Ok(TransactionStatusView {
                 tx_hash: tx_hash_str.to_string(),
                 status: "pending".to_string(),
                 block_id: None,
             }),
+            Err(e) => match client.get_transaction(hash).await {
+                Ok(Some((_tx, block_id))) => Ok(TransactionStatusView {
+                    tx_hash: tx_hash_str.to_string(),
+                    status: "confirmed".to_string(),
+                    block_id: Some(block_id),
+                }),
+                Ok(None) => Ok(TransactionStatusView {
+                    tx_hash: tx_hash_str.to_string(),
+                    status: "pending".to_string(),
+                    block_id: None,
+                }),
+                Err(_) => Err(SdkError::Internal(anyhow::anyhow!(
+                    "Sequencer get_transaction error: {:?}",
+                    e
+                ))),
+            },
         }
     }
 }

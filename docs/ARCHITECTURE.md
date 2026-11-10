@@ -173,6 +173,7 @@ pub trait OwnerApi {
     fn pow_stop_mining(&self) -> Future<Output = SdkResult<PowStatusView>>;
     fn pow_status(&self) -> Future<Output = SdkResult<PowStatusView>>;
     fn channel_deposit(&self, recipient_account: &str, amount_str: &str) -> Future<Output = SdkResult<ChannelDepositResult>>;
+    fn get_transaction_status(&self, tx_hash: &str) -> Future<Output = SdkResult<TransactionStatusView>>;
 }
 ```
 
@@ -527,6 +528,15 @@ To guarantee smooth, non-blocking desktop UX on resource-constrained hardware (e
    - Communicates via Unix Domain Socket (`/tmp/lez_prover.sock`) with structured line-delimited JSON RPC (`ping`, `status`, `submit`, `query`, `cancel`, `shutdown`).
    - Exposes real-time multi-stage progress telemetry (`Simulating`, `Proving Segment 1/2`, `Recursive STARK Fold`, `Completed`).
    - Standalone CLI entrypoint (`e-prover-daemon`) enables running as an independent OS service or background daemon.
+
+### 4.18 On-Chain Sequencer Transaction Status Reconciliation (`get_transaction_status`)
+
+To ensure desktop user interfaces and automated reconcilers receive accurate, non-blocking transaction inclusion status without relying on protobuf payload deserialization (which can fail due to version evolutions between v0.3 shard models and v0.4 actor models), `OwnerApi::get_transaction_status` implements a direct, protocol-adaptive sequencer query pipeline:
+
+1. **Direct JSON-RPC Inclusion Check:** Queries `getTransaction(tx_hash)` on the underlying sequencer JSON-RPC endpoint (`client.inner().request("getTransaction", rpc_params![hash])`). When the sequencer has included the transaction in a block, it returns the tuple `(Value, BlockId)`, allowing the SDK to immediately report `status: "confirmed"` with the canonical `block_id` without deserializing the transaction body.
+2. **Pending & Mempool Detection:** If `getTransaction` returns `None`, the transaction is recognized as still residing in the mempool or pending sequencer ordering (`status: "pending"`, `block_id: None`).
+3. **Fallback Graceful Recovery:** If the raw JSON-RPC query fails, the method attempts a fallback to `client.get_transaction(hash)`. If that also fails, an informative error is returned.
+4. **Desktop UI Integration:** This provides a unified, single source of truth for all transaction types requiring sequencer confirmation (L1 $\to$ LEZ Channel Bridges, Native Transfers, and Contract Calls), ensuring all transactions follow identical lifecycle states (`pending` $\to$ `confirmed` with height, or `failed`).
 
 ## 5. Security & Privacy Model
 

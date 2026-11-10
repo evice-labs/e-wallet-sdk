@@ -1557,6 +1557,31 @@ pub unsafe extern "C" fn e_wallet_get_request_status(
     })
 }
 
+/// Query the on-chain status of a transaction by its 32-byte hex hash.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn e_wallet_get_transaction_status(
+    engine: *mut FfiSdkEngine,
+    tx_hash: *const c_char,
+) -> *mut c_char {
+    catch_ffi(error_json("FFI panic"), || {
+        if engine.is_null() {
+            return error_json("Null engine handle");
+        }
+        let hash_str = match unsafe { parse_c_str(tx_hash) } {
+            Ok(s) => s,
+            Err(e) => return error_json(e),
+        };
+        let ffi = unsafe { &*engine };
+        match ffi
+            .runtime
+            .block_on(ffi.engine.get_transaction_status(hash_str))
+        {
+            Ok(view) => ok_json(&view),
+            Err(e) => error_json(&format!("{:?}", e)),
+        }
+    })
+}
+
 /// Cancel a pending transaction request before approval.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn e_wallet_cancel_request(

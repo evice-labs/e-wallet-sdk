@@ -183,6 +183,12 @@ e-wallet-sdk/
 - **Automatic Protocol Version Detection:** Probes sequencer capabilities at startup and caches protocol modes (`V03ShardModel` vs `V04ActorModel`) for transparent block, transaction, and publication RPC routing.
 - **Legacy Storage Migration (`v03_compat`):** Provides automated migration facilities upgrading v0.3 wallet structures into v0.4 Actor-model format without requiring wallet re-derivation.
 
+#### 17. Protocol-Adaptive Sequencer Transaction Reconciliation (`api.rs`, `sdk-ffi`)
+
+- **Protocol-Adaptive Inclusion Querying (`get_transaction_status` / `e_wallet_get_transaction_status`):** Queries sequencer block inclusion using direct JSON-RPC `getTransaction` without failing on protobuf payload schema discrepancies between LEZ v0.3 and v0.4.
+- **Accurate Lifecycle States:** Distinguishes between transactions pending in the mempool (`status: "pending"`, `block_id: null`) and transactions committed into blocks (`status: "confirmed"`, `block_id: <u64>`).
+- **Unified Engine Single Source of Truth:** Powers consistent status determination across all on-chain actions (transfers, L1 $\to$ LEZ channel bridge deposits, contract interactions) with zero mock fallbacks.
+
 ## Quick Start
 
 ### Prerequisites
