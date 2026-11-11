@@ -3,6 +3,11 @@ resolver = "3"
 members = [
     "crates/sdk-engine",
     "crates/sdk-ffi",
+    "crates/cli",
+    "crates/evidence-tool",
+    "programs/testimonial-program",
+    "tools/dispatcher",
+    "integration-tests",
 ]
 
 [workspace.package]

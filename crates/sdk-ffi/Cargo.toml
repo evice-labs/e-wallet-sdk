@@ -7,7 +7,7 @@ description = "C-ABI FFI wrapper for the Evice Wallet SDK"
 
 [lib]
 name = "e_wallet_sdk"
-crate-type = ["cdylib", "staticlib"]
+crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
 sdk-engine = { workspace = true }
