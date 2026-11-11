@@ -77,7 +77,7 @@ Retrieves engine metadata, API compatibility version, and runtime status.
 ```json
 {
   "ok": true,
-  "sdk_version": "0.2.0",
+  "sdk_version": "0.2.2",
   "api_version": 1,
   "network": "standalone-local",
   "wallet_initialized": true,
