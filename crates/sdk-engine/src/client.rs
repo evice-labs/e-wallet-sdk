@@ -455,9 +455,7 @@ mod tests {
     }
 }
 
-// ---------------------------------------------------------------------------
 // PROVER WORKER DAEMON & IPC SUBSYSTEM
-// ---------------------------------------------------------------------------
 pub mod prover_daemon {
     use dashmap::DashMap;
     use serde::{Deserialize, Serialize};
@@ -705,6 +703,7 @@ pub mod prover_daemon {
         }
 
         /// Starts the Unix Domain Socket IPC server.
+        #[cfg(unix)]
         pub async fn run_ipc_server(self: Arc<Self>) -> Result<(), std::io::Error> {
             let _ = tokio::fs::remove_file(&self.socket_path).await;
             let listener = tokio::net::UnixListener::bind(&self.socket_path)?;
@@ -730,6 +729,18 @@ pub mod prover_daemon {
             Ok(())
         }
 
+        #[cfg(not(unix))]
+        pub async fn run_ipc_server(self: Arc<Self>) -> Result<(), std::io::Error> {
+            log::info!(
+                "[e-prover-daemon] IPC UDS server not supported on non-unix, daemon running in background mode"
+            );
+            while self.is_running.load(Ordering::Relaxed) {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+            Ok(())
+        }
+
+        #[cfg(unix)]
         async fn handle_client(&self, stream: tokio::net::UnixStream) {
             let (reader, mut writer) = stream.into_split();
             let mut lines = BufReader::new(reader).lines();
@@ -866,6 +877,7 @@ pub mod prover_daemon {
             }
         }
 
+        #[cfg(unix)]
         async fn send_request(&self, req: IpcRequest) -> Result<IpcResponse, String> {
             let stream = tokio::net::UnixStream::connect(&self.socket_path)
                 .await
@@ -893,6 +905,11 @@ pub mod prover_daemon {
 
             serde_json::from_str::<IpcResponse>(line.trim())
                 .map_err(|e| format!("Malformed daemon response: {}", e))
+        }
+
+        #[cfg(not(unix))]
+        async fn send_request(&self, _req: IpcRequest) -> Result<IpcResponse, String> {
+            Err("UDS IPC client not supported on non-unix".to_string())
         }
     }
 
