@@ -588,7 +588,4 @@ Following the project's phased delivery approach, the architecture document refl
 - [x] **Comprehensive CLI Subcommands (`cli`):** Full dispatch wiring for wallet lifecycle (`create`, `open`, `restore`), account management (`create-public`, `create-private`, `list`, `balance`), transfers across 4 directions with transparent `.lez` LNS name resolution and interactive terminal approval modal, and token operations (`create-definition`, `initialize-holding`, `transfer`, `mint`, `burn`, `balance`).
 - [x] **Standalone Development Environment (`dev-env/`, Docker, Justfile):** Containerized and native standalone LEZ sequencer with mocked Bedrock L1, pre-funded Alice & Bob genesis accounts, fast `RISC0_DEV_MODE=1` execution, zero external network dependency, and declarative `Justfile` tasks (`dev-start`, `dev-stop`, `dev-health`, `dev-fund`, `dev-clean`).
 - [x] **On-Chain Smart Contract & Dispatcher Tooling (`programs/`, `tools/`, `deployments.json`):** RISC-V zkVM `testimonial-program` with `SUBMISSION_ID` attribution, `lez-dispatcher` program deployment and transaction dispatch CLI, dynamic multi-network `deployments.json` registry, and `evidence-tool` adoption auditor.
-
-### Upcoming Incremental Stages
-
-- [ ] **Basecamp Integration & Testimonial Mini-App:** Core and UI Basecamp modules published to catalog, testimonial submission on testnet 0.3 - 0.4.
+- [x] **Basecamp Integration & Reference Mini-Apps (`e-wallet-core`, `e-wallet-ui`, `dao-miniapp`):** Core C++20 and UI QML Basecamp modules published to catalog (`logos-modules-release-base`), native EmPoWer PoW mining & L1 → LEZ channel bridge, on-chain testimonial submission on testnet 0.3 - 0.4, and Logos DAO Governance reference mini-app.

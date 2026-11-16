@@ -1388,11 +1388,19 @@ pub unsafe extern "C" fn e_wallet_propose_contract_call(
         };
 
         let sid = SessionId(sess_str.to_string());
-        let program = match AccountId::from_str(prog_str) {
+        let clean_prog = prog_str
+            .trim()
+            .trim_start_matches("Public/")
+            .trim_start_matches("Private/");
+        let program = match AccountId::from_str(clean_prog) {
             Ok(a) => a,
             Err(e) => return error_json(&format!("Invalid program_id: {:?}", e)),
         };
-        let payer = match AccountId::from_str(payer_str) {
+        let clean_payer = payer_str
+            .trim()
+            .trim_start_matches("Public/")
+            .trim_start_matches("Private/");
+        let payer = match AccountId::from_str(clean_payer) {
             Ok(a) => a,
             Err(e) => return error_json(&format!("Invalid payer_id: {:?}", e)),
         };
@@ -1403,13 +1411,21 @@ pub unsafe extern "C" fn e_wallet_propose_contract_call(
         };
         let mut mentions = Vec::with_capacity(raw_mentions.len());
         for m in raw_mentions {
-            match AccountId::from_str(&m) {
+            let clean_m = m
+                .trim()
+                .trim_start_matches("Public/")
+                .trim_start_matches("Private/");
+            match AccountId::from_str(clean_m) {
                 Ok(a) => mentions.push(a),
                 Err(e) => return error_json(&format!("Invalid mention account: {:?}", e)),
             }
         }
 
-        let calldata = match hex::decode(calldata_str) {
+        let clean_calldata = calldata_str
+            .trim()
+            .trim_start_matches("0x")
+            .trim_start_matches("0X");
+        let calldata = match hex::decode(clean_calldata) {
             Ok(b) => b,
             Err(e) => return error_json(&format!("Invalid calldata hex: {:?}", e)),
         };
@@ -1844,7 +1860,11 @@ pub unsafe extern "C" fn e_wallet_sign_identity_attestation(
             Ok(s) => s,
             Err(e) => return error_json(e),
         };
-        let msg_bytes = match hex::decode(msg_str) {
+        let clean_msg = msg_str
+            .trim()
+            .trim_start_matches("0x")
+            .trim_start_matches("0X");
+        let msg_bytes = match hex::decode(clean_msg) {
             Ok(b) => b,
             Err(e) => return error_json(&format!("Invalid message hex: {:?}", e)),
         };
