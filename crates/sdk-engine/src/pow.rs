@@ -465,7 +465,7 @@ pub fn parse_deposit_amount(amount_str: &str, fallback_unbridged: u128) -> SdkRe
 ///    and confirmed immediately.
 pub async fn execute_channel_deposit(
     pow_mgr: &Arc<PowBridgeManager>,
-    wallet_mutex: &Arc<Mutex<WalletCore<TestnetSequencerClient>>>,
+    wallet_mutex: &Arc<Mutex<Option<WalletCore<TestnetSequencerClient>>>>,
     store_mutex: &Arc<Mutex<PersistentStore>>,
     recipient_account_id: AccountId,
     amount_str: &str,
@@ -484,7 +484,8 @@ pub async fn execute_channel_deposit(
 
     // Guardrail: Reject private accounts (Asymmetric Deposit Trap)
     let (client, gas_limit, wallet_public_keys) = {
-        let wallet = wallet_mutex.lock().await;
+        let guard = wallet_mutex.lock().await;
+        let wallet = guard.as_ref().ok_or(SdkError::WalletLocked)?;
         let kc = wallet.storage().key_chain();
         if kc.private_account(recipient_account_id).is_some()
             || kc.managed_private_account(recipient_account_id).is_some()
@@ -567,9 +568,11 @@ pub async fn execute_channel_deposit(
 
     // Wait briefly for block inclusion on the LEZ sequencer
     {
-        let wallet = wallet_mutex.lock().await;
-        let _ =
-            tokio::time::timeout(Duration::from_secs(12), wallet.poller().poll_tx(tx_hash)).await;
+        let guard = wallet_mutex.lock().await;
+        if let Some(wallet) = guard.as_ref() {
+            let _ = tokio::time::timeout(Duration::from_secs(12), wallet.poller().poll_tx(tx_hash))
+                .await;
+        }
     }
 
     // 3. Deduct bridged amount from unbridged L1 balance and persist

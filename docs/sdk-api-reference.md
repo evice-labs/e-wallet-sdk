@@ -110,7 +110,7 @@ Returns accounts authorized for the given session.
   - `e_wallet_request_accounts(engine: *mut FfiSdkEngine, session_id: *const c_char) -> *mut c_char`
   - `e_wallet_list_accounts(engine: *mut FfiSdkEngine, session_id: *const c_char) -> *mut c_char`
   - `e_wallet_list_all_accounts(engine: *mut FfiSdkEngine) -> *mut c_char` *(Privileged Owner API)*
-- **Privilege Required:** `request_accounts` & `list_accounts` require active session grants. `list_all_accounts` is an owner call querying all derived accounts.
+- **Privilege Required:** `request_accounts` & `list_accounts` require active session grants. `list_all_accounts` is an owner call querying all derived accounts. All three require an unlocked vault (`WalletLocked` is returned when `SdkEngine` is locked).
 - **Response Format (AccountViewDto):**
 ```json
 {
@@ -123,7 +123,8 @@ Returns accounts authorized for the given session.
       "is_private": false,
       "label": "Primary Treasury",
       "balance": "10000000000",
-      "formatted_balance": "10,000,000,000.00"
+      "formatted_balance": "10,000,000,000",
+      "unit": "LGO"
     },
     {
       "account_id": "87MNwzvh2ephQU9aR5snboGUXKgS1FnPYh1W4KZKzxyz",
@@ -132,7 +133,8 @@ Returns accounts authorized for the given session.
       "is_private": true,
       "label": "Shielded Vault",
       "balance": "5000000000",
-      "formatted_balance": "5,000,000,000.00"
+      "formatted_balance": "5,000,000,000",
+      "unit": "LGO"
     }
   ]
 }
@@ -243,13 +245,13 @@ Proposes an explicit smart contract execution specifying target program ID, paye
 ```
 
 ### 3.8b Token Program Holdings API
-Queries and registers fungible token program asset holdings across sessions:
+Queries and registers fungible token program asset holdings across sessions (fetching live balances from sequencer actor state for public holdings or local shielded state for private holdings):
 - **`list_token_holdings(session_id)`:**
-  Lists tracked token holdings accessible to the session.
+  Lists tracked token holdings accessible to the session with live on-chain/shielded balances.
   - **FFI Signature:** `e_wallet_list_token_holdings(engine, session_id) -> *mut c_char`
-  - **Response:** `{"ok": true, "tokens": [{"holding_id": "...", "definition_id": "...", "symbol": "LOGOS", "name": "Logos", "is_shielded": false}]}`
+  - **Response:** `{"ok": true, "tokens": [{"holding_id": "...", "definition_id": "...", "symbol": "LUSD", "name": "Logos Testnet Stablecoin", "is_shielded": false, "balance": "0", "formatted_balance": "0"}]}`
 - **`list_all_token_holdings()`:**
-  Privileged Owner API returning all token holdings tracked by the engine keystore.
+  Privileged Owner API returning all token holdings tracked by the engine keystore along with live `balance` and `formatted_balance`.
   - **FFI Signature:** `e_wallet_list_all_token_holdings(engine) -> *mut c_char`
 - **`register_token_holding(holding_id, definition_id, symbol, name, is_shielded)`:**
   Privileged Owner API registering a new token holding, persisting it atomically to disk (`token_holdings: Vec<TokenHoldingEntry>`).

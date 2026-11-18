@@ -114,11 +114,13 @@ pub struct TokenHoldingView {
     pub symbol: String,
     pub name: String,
     pub is_shielded: bool,
+    pub balance: Option<u128>,
 }
 
 /// The central SDK engine.
 pub struct SdkEngine {
-    wallet: Arc<Mutex<WalletCore<TestnetSequencerClient>>>,
+    wallet: Arc<Mutex<Option<WalletCore<TestnetSequencerClient>>>>,
+    client: TestnetSequencerClient,
     sessions: SessionStore,
     requests: RequestStore,
     tx_queue: TxQueue,
@@ -359,7 +361,8 @@ pub trait OwnerApi {
 
 impl SdkEngine {
     pub fn new(
-        wallet: WalletCore<TestnetSequencerClient>,
+        wallet: Option<WalletCore<TestnetSequencerClient>>,
+        client: TestnetSequencerClient,
         approval_handler: Arc<dyn ApprovalHandler>,
         config: SdkConfig,
     ) -> SdkResult<Self> {
@@ -376,6 +379,7 @@ impl SdkEngine {
 
         Ok(Self {
             wallet: Arc::new(Mutex::new(wallet)),
+            client,
             sessions: SessionStore::new(config.session_ttl),
             requests: RequestStore::new(),
             tx_queue: TxQueue::new(),
@@ -509,7 +513,7 @@ impl SdkEngine {
                     } else {
                         None
                     };
-                    (w, id)
+                    (Some(w), id)
                 }
                 Err(e) if password.is_empty() => {
                     log::info!(
@@ -518,15 +522,7 @@ impl SdkEngine {
                     );
                     store.state_mut().locked = true;
                     let _ = store.save();
-                    let (placeholder, _mnemonic) = WalletCore::new_init_storage_with_client(
-                        config.wallet_config_path.clone(),
-                        config.wallet_storage_path.clone(),
-                        Some(overrides),
-                        "",
-                        client,
-                    )
-                    .map_err(SdkError::Internal)?;
-                    (placeholder, None)
+                    (None, None)
                 }
                 Err(e) => return Err(SdkError::Internal(e)),
             }
@@ -536,14 +532,14 @@ impl SdkEngine {
                 config.wallet_storage_path.clone(),
                 Some(overrides),
                 password,
-                client,
+                client.clone(),
             )
             .map_err(SdkError::Internal)?;
             let id = Self::derive_identity_from_wallet(&wallet);
-            (wallet, id)
+            (Some(wallet), id)
         };
 
-        let engine = Self::new(wallet, approval_handler, config)?;
+        let engine = Self::new(wallet, client, approval_handler, config)?;
         if let (Some(secret), Ok(mut guard)) = (initial_identity, engine.identity_secret.try_lock())
         {
             *guard = Some(secret);
@@ -556,8 +552,11 @@ impl SdkEngine {
         if let Some(limit) = store.state().gas_limit_override {
             limit
         } else {
-            let wallet = self.wallet.lock().await;
-            wallet.config().gas_limit
+            let guard = self.wallet.lock().await;
+            guard
+                .as_ref()
+                .map(|w| w.config().gas_limit)
+                .unwrap_or(DEFAULT_WALLET_GAS_LIMIT)
         }
     }
 
@@ -568,12 +567,14 @@ impl SdkEngine {
             store.save().map_err(SdkError::Internal)?;
         }
         {
-            let mut wallet = self.wallet.lock().await;
-            let mut cfg = wallet.config().clone();
-            cfg.gas_limit = limit;
-            wallet.set_config(cfg);
-            if let Err(e) = wallet.store_config_changes().await {
-                log::warn!("Failed to persist updated wallet config to disk: {:?}", e);
+            let mut guard = self.wallet.lock().await;
+            if let Some(wallet) = guard.as_mut() {
+                let mut cfg = wallet.config().clone();
+                cfg.gas_limit = limit;
+                wallet.set_config(cfg);
+                if let Err(e) = wallet.store_config_changes().await {
+                    log::warn!("Failed to persist updated wallet config to disk: {:?}", e);
+                }
             }
         }
         Ok(())
@@ -600,7 +601,8 @@ impl SdkEngine {
         label: String,
         is_private: bool,
     ) -> SdkResult<()> {
-        let mut wallet = self.wallet.lock().await;
+        let mut guard = self.wallet.lock().await;
+        let wallet = guard.as_mut().ok_or(SdkError::WalletLocked)?;
         let privacy_account = if is_private {
             AccountIdWithPrivacy::Private(account)
         } else {
@@ -667,7 +669,8 @@ impl SdkEngine {
             SdkError::InvalidArgument(format!("Invalid account id '{}': {}", trimmed, e))
         })?;
 
-        let wallet = self.wallet.lock().await;
+        let guard = self.wallet.lock().await;
+        let wallet = guard.as_ref().ok_or(SdkError::WalletLocked)?;
         let store = self.store.lock().await;
         let custom_labels = &store.state().account_labels;
 
@@ -745,7 +748,7 @@ impl SdkEngine {
         &self.approval_handler
     }
 
-    pub fn wallet(&self) -> &Arc<Mutex<WalletCore<TestnetSequencerClient>>> {
+    pub fn wallet(&self) -> &Arc<Mutex<Option<WalletCore<TestnetSequencerClient>>>> {
         &self.wallet
     }
 
@@ -787,7 +790,8 @@ impl DAppApi for SdkEngine {
         let session = self.sessions.create(caller_identity, api_version).await;
         if is_internal_ui {
             let owned_ids: Vec<AccountId> = {
-                let wallet = self.wallet.lock().await;
+                let guard = self.wallet.lock().await;
+                let wallet = guard.as_ref().ok_or(SdkError::WalletLocked)?;
                 let kc = wallet.storage().key_chain();
                 kc.public_account_ids()
                     .map(|(id, _)| id)
@@ -845,7 +849,8 @@ impl DAppApi for SdkEngine {
     async fn list_accounts(&self, session_id: &SessionId) -> SdkResult<Vec<AccountView>> {
         let session = self.validate_session(session_id).await?;
         let granted = session.granted_accounts();
-        let wallet = self.wallet.lock().await;
+        let guard = self.wallet.lock().await;
+        let wallet = guard.as_ref().ok_or(SdkError::WalletLocked)?;
 
         let mut views = Vec::new();
         for account_id in granted {
@@ -863,7 +868,8 @@ impl DAppApi for SdkEngine {
     async fn get_balance(&self, session_id: &SessionId, account: &AccountId) -> SdkResult<u128> {
         self.require_grant(session_id, account, GrantKind::Read)
             .await?;
-        let wallet = self.wallet.lock().await;
+        let guard = self.wallet.lock().await;
+        let wallet = guard.as_ref().ok_or(SdkError::WalletLocked)?;
         if wallet
             .storage()
             .key_chain()
@@ -912,7 +918,8 @@ impl DAppApi for SdkEngine {
         let to_account = self.resolve_destination(&to).await?;
 
         let (is_from_private, is_to_private) = {
-            let wallet = self.wallet.lock().await;
+            let guard = self.wallet.lock().await;
+            let wallet = guard.as_ref().ok_or(SdkError::WalletLocked)?;
             let from_priv = match from_privacy {
                 Some(AccountPrivacy::Private) => true,
                 Some(AccountPrivacy::Public) => false,
@@ -1003,7 +1010,18 @@ impl DAppApi for SdkEngine {
             match decision {
                 ApprovalDecision::Approve => {
                     requests.set_status(&rid, RequestStatus::Approved).await;
-                    let mut w = wallet.lock().await;
+                    let mut guard = wallet.lock().await;
+                    let Some(w) = guard.as_mut() else {
+                        requests
+                            .set_status(
+                                &rid,
+                                RequestStatus::Failed {
+                                    reason: "Wallet is locked".into(),
+                                },
+                            )
+                            .await;
+                        return;
+                    };
 
                     let client = w.client().clone();
                     let protocol_version = client.detect_protocol_version().await;
@@ -1150,7 +1168,7 @@ impl DAppApi for SdkEngine {
                         let transfer_res = {
                             let facade =
                                 wallet::program_facades::native_token_transfer::NativeTokenTransfer(
-                                    &w,
+                                    w,
                                 );
                             facade
                                 .transfer(
@@ -1163,7 +1181,7 @@ impl DAppApi for SdkEngine {
                         };
                         match transfer_res {
                             Ok((tx_hash, _secrets)) => {
-                                if let Err(e) = finish_and_sync_transaction(&mut w, tx_hash).await {
+                                if let Err(e) = finish_and_sync_transaction(w, tx_hash).await {
                                     log::warn!(
                                         "finish_and_sync_transaction warning for {}: {:?}",
                                         tx_hash,
@@ -1221,7 +1239,8 @@ impl DAppApi for SdkEngine {
         }
 
         if from_holding == to_holding {
-            let wallet = self.wallet.lock().await;
+            let guard = self.wallet.lock().await;
+            let wallet = guard.as_ref().ok_or(SdkError::WalletLocked)?;
             let is_from_private = wallet
                 .storage()
                 .key_chain()
@@ -1306,7 +1325,18 @@ impl DAppApi for SdkEngine {
             match decision {
                 ApprovalDecision::Approve => {
                     requests.set_status(&rid, RequestStatus::Approved).await;
-                    let w = wallet.lock().await;
+                    let guard = wallet.lock().await;
+                    let Some(w) = guard.as_ref() else {
+                        requests
+                            .set_status(
+                                &rid,
+                                RequestStatus::Failed {
+                                    reason: "Wallet is locked".into(),
+                                },
+                            )
+                            .await;
+                        return;
+                    };
                     let is_from_private = w
                         .storage()
                         .key_chain()
@@ -1585,7 +1615,18 @@ impl DAppApi for SdkEngine {
             match decision {
                 ApprovalDecision::Approve => {
                     requests.set_status(&rid, RequestStatus::Approved).await;
-                    let w = wallet.lock().await;
+                    let guard = wallet.lock().await;
+                    let Some(w) = guard.as_ref() else {
+                        requests
+                            .set_status(
+                                &rid,
+                                RequestStatus::Failed {
+                                    reason: "Wallet is locked".into(),
+                                },
+                            )
+                            .await;
+                        return;
+                    };
                     if let Some(primary) = mentions_to_send.first() {
                         let program = *primary;
                         let mut accounts = Vec::with_capacity(mentions_to_send.len());
@@ -1840,7 +1881,18 @@ impl DAppApi for SdkEngine {
             match decision {
                 ApprovalDecision::Approve => {
                     requests.set_status(&rid, RequestStatus::Approved).await;
-                    let w = wallet.lock().await;
+                    let guard = wallet.lock().await;
+                    let Some(w) = guard.as_ref() else {
+                        requests
+                            .set_status(
+                                &rid,
+                                RequestStatus::Failed {
+                                    reason: "Wallet is locked".into(),
+                                },
+                            )
+                            .await;
+                        return;
+                    };
 
                     let mut accounts = Vec::with_capacity(mentions.len());
                     for &acc in &mentions {
@@ -2177,10 +2229,10 @@ impl OwnerApi for SdkEngine {
         )
         .map_err(SdkError::Internal)?;
 
-        let mut wallet = self.wallet.lock().await;
-        *wallet = new_wallet;
+        let mut wallet = new_wallet;
         let _ = wallet.start_at_chain_tip().await;
         wallet.store_persistent_data().map_err(SdkError::Internal)?;
+        *self.wallet.lock().await = Some(wallet);
 
         let mut store = self.store.lock().await;
         let seed = mnemonic.to_seed(password);
@@ -2194,13 +2246,33 @@ impl OwnerApi for SdkEngine {
     }
 
     async fn restore_wallet(&self, mnemonic: &Mnemonic, password: &str) -> SdkResult<()> {
-        let mut wallet = self.wallet.lock().await;
+        let mut guard = self.wallet.lock().await;
+        let mut wallet = match guard.take() {
+            Some(w) => w,
+            None => {
+                let effective_gas_limit = self.get_gas_limit().await;
+                let overrides = wallet::config::WalletConfigOverrides {
+                    gas_limit: Some(effective_gas_limit),
+                    ..Default::default()
+                };
+                let (w, _) = WalletCore::new_init_storage_with_client(
+                    self.config.wallet_config_path.clone(),
+                    self.config.wallet_storage_path.clone(),
+                    Some(overrides),
+                    password,
+                    self.client.clone(),
+                )
+                .map_err(SdkError::Internal)?;
+                w
+            }
+        };
         wallet.restore_storage(mnemonic);
         let _ = wallet.start_at_chain_tip().await;
         if !password.is_empty() {
             wallet.set_password(password).map_err(SdkError::Internal)?;
         }
         wallet.store_persistent_data().map_err(SdkError::Internal)?;
+        *guard = Some(wallet);
 
         let seed = mnemonic.to_seed(password);
         let identity = crate::identity::derive_identity_secret(&seed);
@@ -2219,6 +2291,7 @@ impl OwnerApi for SdkEngine {
         }
         let _ = self.pow_manager.stop_mining(&self.store);
         *self.identity_secret.lock().await = None;
+        *self.wallet.lock().await = None;
         let mut store = self.store.lock().await;
         store.state_mut().locked = true;
         store.save().map_err(SdkError::Internal)?;
@@ -2258,7 +2331,7 @@ impl OwnerApi for SdkEngine {
             let derived_id = Self::derive_identity_from_wallet(&loaded_wallet);
             {
                 let mut wallet = self.wallet.lock().await;
-                *wallet = loaded_wallet;
+                *wallet = Some(loaded_wallet);
             }
             {
                 let mut id_guard = self.identity_secret.lock().await;
@@ -2280,7 +2353,8 @@ impl OwnerApi for SdkEngine {
         {
             return Err(SdkError::InvalidPassword);
         }
-        let mut wallet = self.wallet.lock().await;
+        let mut guard = self.wallet.lock().await;
+        let wallet = guard.as_mut().ok_or(SdkError::WalletLocked)?;
         wallet
             .set_password(new_password)
             .map_err(SdkError::Internal)?;
@@ -2299,7 +2373,8 @@ impl OwnerApi for SdkEngine {
             }
         }
         let account_id = {
-            let mut wallet = self.wallet.lock().await;
+            let mut guard = self.wallet.lock().await;
+            let wallet = guard.as_mut().ok_or(SdkError::WalletLocked)?;
             let (account_id, _chain_index) = wallet.create_new_account_public(None);
 
             if let Some(label_str) = label {
@@ -2341,7 +2416,8 @@ impl OwnerApi for SdkEngine {
             }
         }
         let account_id = {
-            let mut wallet = self.wallet.lock().await;
+            let mut guard = self.wallet.lock().await;
+            let wallet = guard.as_mut().ok_or(SdkError::WalletLocked)?;
             let (account_id, _chain_index) = wallet.create_new_account_private(None);
 
             if let Some(label_str) = label {
@@ -2376,7 +2452,14 @@ impl OwnerApi for SdkEngine {
     }
 
     async fn list_all_accounts(&self) -> SdkResult<Vec<AccountView>> {
-        let mut wallet = self.wallet.lock().await;
+        {
+            let store = self.store.lock().await;
+            if store.state().locked {
+                return Err(SdkError::WalletLocked);
+            }
+        }
+        let mut guard = self.wallet.lock().await;
+        let wallet = guard.as_mut().ok_or(SdkError::WalletLocked)?;
         if wallet
             .storage()
             .key_chain()
@@ -2494,23 +2577,95 @@ impl OwnerApi for SdkEngine {
     }
 
     async fn list_all_token_holdings(&self) -> SdkResult<Vec<TokenHoldingView>> {
-        let store = self.store.lock().await;
-        let mut views = Vec::new();
-        for entry in &store.state().token_holdings {
-            let holding_id = match parse_account_id(&entry.holding_id) {
-                Ok(id) => id,
-                Err(_) => continue,
+        let entries = {
+            let store = self.store.lock().await;
+            let mut parsed = Vec::new();
+            for entry in &store.state().token_holdings {
+                let holding_id = match parse_account_id(&entry.holding_id) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+                let definition_id = match parse_account_id(&entry.definition_id) {
+                    Ok(id) => id,
+                    Err(_) => continue,
+                };
+                parsed.push((
+                    holding_id,
+                    definition_id,
+                    entry.symbol.clone(),
+                    entry.name.clone(),
+                    entry.is_shielded,
+                ));
+            }
+            parsed
+        };
+
+        if entries.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let (client, private_balances) = {
+            let guard = self.wallet.lock().await;
+            let wallet = guard.as_ref().ok_or(SdkError::WalletLocked)?;
+            let mut priv_map = std::collections::HashMap::new();
+            for (holding_id, definition_id, _, _, is_shielded) in &entries {
+                if *is_shielded {
+                    let bal = wallet
+                        .private_account_state(*holding_id)
+                        .and_then(|acc| acc.data.actor_states.get(definition_id))
+                        .map(|bytes| decode_token_actor_balance(bytes))
+                        .unwrap_or(0);
+                    priv_map.insert((*holding_id, *definition_id), bal);
+                }
+            }
+            (wallet.client().clone(), priv_map)
+        };
+
+        let mut public_account_cache: std::collections::HashMap<AccountId, Option<lee::Account>> =
+            std::collections::HashMap::new();
+        let mut views = Vec::with_capacity(entries.len());
+
+        for (holding_id, definition_id, symbol, name, is_shielded) in entries {
+            let balance = if is_shielded {
+                Some(
+                    private_balances
+                        .get(&(holding_id, definition_id))
+                        .copied()
+                        .unwrap_or(0),
+                )
+            } else {
+                if let std::collections::hash_map::Entry::Vacant(e) =
+                    public_account_cache.entry(holding_id)
+                {
+                    let fetched =
+                        <TestnetSequencerClient as wallet::WalletSequencerClient>::get_account(
+                            &client, holding_id,
+                        )
+                        .await
+                        .ok()
+                        .flatten();
+                    e.insert(fetched);
+                }
+                match public_account_cache.get(&holding_id) {
+                    Some(Some(acc)) => Some(
+                        acc.data
+                            .actor_states
+                            .get(&definition_id)
+                            .map(|bytes| decode_token_actor_balance(bytes))
+                            .unwrap_or(0),
+                    ),
+                    Some(None) => Some(0),
+                    None => None,
+                }
             };
-            let definition_id = match parse_account_id(&entry.definition_id) {
-                Ok(id) => id,
-                Err(_) => continue,
-            };
+
             views.push(TokenHoldingView {
                 holding_id,
                 definition_id,
-                symbol: entry.symbol.clone(),
-                name: entry.name.clone(),
-                is_shielded: entry.is_shielded,
+                symbol,
+                name,
+                is_shielded,
+                balance,
             });
         }
         Ok(views)
@@ -2560,10 +2715,7 @@ impl OwnerApi for SdkEngine {
             ));
         }
         let hash = common::HashType(bytes.try_into().unwrap());
-        let client = {
-            let w = self.wallet.lock().await;
-            w.client().clone()
-        };
+        let client = self.client.clone();
 
         let query_res: Result<Option<(serde_json::Value, BlockId)>, _> = client
             .inner()
@@ -2623,6 +2775,25 @@ async fn finish_and_sync_transaction(
     }
     w.store_persistent_data()?;
     Ok(())
+}
+
+/// Decodes a token program actor state byte slice into a raw `u128` token balance.
+/// Supports canonical 16-byte little-endian `u128` (`wrapped_token` / `native_token` layout),
+/// 48-byte `TokenHolding` (`definition_id: [u8; 32]` + `balance: u128`), and 8-byte `u64`.
+fn decode_token_actor_balance(data: &[u8]) -> u128 {
+    if data.is_empty() {
+        return 0;
+    }
+    if data.len() == 16 {
+        return u128::from_le_bytes(data.try_into().unwrap());
+    }
+    if data.len() == 48 {
+        return u128::from_le_bytes(data[32..48].try_into().unwrap());
+    }
+    if data.len() == 8 {
+        return u64::from_le_bytes(data.try_into().unwrap()) as u128;
+    }
+    0
 }
 
 fn parse_account_id(input: &str) -> SdkResult<AccountId> {
