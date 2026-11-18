@@ -149,6 +149,8 @@ impl From<&SdkInfo> for SdkInfoDto {
     }
 }
 
+pub const NATIVE_TOKEN_SYMBOL: &str = "LGO";
+
 #[derive(Serialize)]
 pub struct AccountViewDto {
     pub account_id: String,
@@ -158,6 +160,7 @@ pub struct AccountViewDto {
     pub label: Option<String>,
     pub balance: Option<String>,
     pub formatted_balance: Option<String>,
+    pub unit: &'static str,
 }
 
 pub fn format_thousand_separator(amount: u128) -> String {
@@ -171,7 +174,7 @@ pub fn format_thousand_separator(amount: u128) -> String {
         }
         result.push(c);
     }
-    format!("{}.00", result)
+    result
 }
 
 impl From<&AccountView> for AccountViewDto {
@@ -189,6 +192,7 @@ impl From<&AccountView> for AccountViewDto {
             label: view.label.clone(),
             balance: view.balance.map(|b| b.to_string()),
             formatted_balance: view.balance.map(format_thousand_separator),
+            unit: NATIVE_TOKEN_SYMBOL,
         }
     }
 }
@@ -358,6 +362,8 @@ pub struct TokenHoldingDto {
     pub symbol: String,
     pub name: String,
     pub is_shielded: bool,
+    pub balance: Option<String>,
+    pub formatted_balance: Option<String>,
 }
 
 impl From<&sdk_engine::api::TokenHoldingView> for TokenHoldingDto {
@@ -368,6 +374,8 @@ impl From<&sdk_engine::api::TokenHoldingView> for TokenHoldingDto {
             symbol: v.symbol.clone(),
             name: v.name.clone(),
             is_shielded: v.is_shielded,
+            balance: v.balance.map(|b| b.to_string()),
+            formatted_balance: v.balance.map(format_thousand_separator),
         }
     }
 }
