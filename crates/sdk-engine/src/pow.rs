@@ -26,10 +26,9 @@ use tokio::sync::Mutex;
 use url::Url;
 use wallet::{WalletCore, WalletSequencerClient};
 
-use crate::client::{SequencerProtocolVersion, TestnetSequencerClient};
+use crate::client::TestnetSequencerClient;
 use crate::error::{SdkError, SdkResult};
 use crate::store::PersistentStore;
-use crate::v03_compat;
 
 /// Default L1 Bedrock Node HTTP endpoint (`logos-blockchain-node`).
 pub const DEFAULT_L1_NODE_URL: &str = "http://127.0.0.1:8080";
@@ -467,6 +466,7 @@ pub async fn execute_channel_deposit(
     pow_mgr: &Arc<PowBridgeManager>,
     wallet_mutex: &Arc<Mutex<Option<WalletCore<TestnetSequencerClient>>>>,
     store_mutex: &Arc<Mutex<PersistentStore>>,
+    submitted_tx_nonces: &dashmap::DashMap<String, (AccountId, Nonce)>,
     recipient_account_id: AccountId,
     amount_str: &str,
 ) -> SdkResult<ChannelDepositResult> {
@@ -557,7 +557,7 @@ pub async fn execute_channel_deposit(
     }
 
     // 2. Execute on-chain LEZ settlement from the highest-balance Genesis/Testnet dispenser
-    let (tx_hash, actual_amount) = execute_on_chain_bridge_disbursement(
+    let (tx_hash, actual_amount, dispenser_id, from_nonce) = execute_on_chain_bridge_disbursement(
         &client,
         recipient_account_id,
         requested_amount,
@@ -565,6 +565,9 @@ pub async fn execute_channel_deposit(
         &wallet_public_keys,
     )
     .await?;
+
+    let tx_hash_hex = hex::encode(tx_hash);
+    submitted_tx_nonces.insert(tx_hash_hex.clone(), (dispenser_id, from_nonce));
 
     // Wait briefly for block inclusion on the LEZ sequencer
     {
@@ -590,7 +593,7 @@ pub async fn execute_channel_deposit(
     }
 
     Ok(ChannelDepositResult {
-        tx_hash: hex::encode(tx_hash),
+        tx_hash: tx_hash_hex,
         amount_deposited: actual_amount.to_string(),
         recipient_account_id: recipient_account_id.to_string(),
     })
@@ -604,7 +607,7 @@ async fn execute_on_chain_bridge_disbursement(
     requested_amount: u128,
     gas_limit: u64,
     wallet_public_keys: &[(AccountId, PrivateKey)],
-) -> SdkResult<(common::HashType, u128)> {
+) -> SdkResult<(common::HashType, u128, AccountId, Nonce)> {
     let mut candidates: Vec<(AccountId, PrivateKey)> = Vec::new();
     let mut seen_ids = BTreeSet::new();
 
@@ -656,7 +659,7 @@ async fn execute_on_chain_bridge_disbursement(
         });
 
     let effective_gas_limit = gas_limit.max(crate::api::DEFAULT_WALLET_GAS_LIMIT);
-    let max_fee = v03_compat::v03_max_fee_for(effective_gas_limit, quote.base_fee_exec);
+    let max_fee = u128::from(effective_gas_limit).saturating_mul(u128::from(quote.base_fee_exec));
 
     // Find the candidate dispenser with the highest on-chain balance
     let mut best_candidate: Option<(AccountId, PrivateKey, u128)> = None;
@@ -699,73 +702,50 @@ async fn execute_on_chain_bridge_disbursement(
         .and_then(|v| v.into_iter().next())
         .unwrap_or(Nonce(0));
 
-    let protocol_version = client.detect_protocol_version().await;
-    if protocol_version == SequencerProtocolVersion::V03ShardModel {
-        let (payload, local_hash) = v03_compat::build_and_sign_v03_native_transfer(
-            dispenser_id,
-            recipient_id,
-            transfer_amount,
-            from_nonce,
+    let to_actor = Actor::native_balance(dispenser_id);
+    let msg_data = Program::serialize_message(NativeTokenMessage::Transfer {
+        to: recipient_id,
+        amount: transfer_amount,
+    })
+    .map_err(|e| SdkError::Internal(e.into()))?;
+
+    let public_actors = BTreeSet::from([
+        Actor::native_balance(dispenser_id),
+        Actor::native_balance(recipient_id),
+    ]);
+    let nonces = BTreeMap::from([(dispenser_id, from_nonce)]);
+    let fee = Some(lee::FeeDeclaration::new(
+        dispenser_id,
+        effective_gas_limit,
+        0,
+        max_fee,
+    ));
+    let mut admission_evidence = Vec::new();
+    if from_nonce == Nonce(0) {
+        admission_evidence.push(PublicAccountEvidence::Key(PublicKey::new_from_private_key(
             &dispenser_sk,
-            effective_gas_limit,
-            quote.base_fee_exec,
-        )?;
-        let returned_hash = client
-            .send_raw_transaction(payload)
-            .await
-            .map_err(|e| SdkError::Internal(anyhow::anyhow!(e.to_string())))?;
-        let final_hash = if returned_hash == common::HashType::default() {
-            local_hash
-        } else {
-            returned_hash
-        };
-        Ok((final_hash, transfer_amount))
-    } else {
-        let to_actor = Actor::native_balance(dispenser_id);
-        let msg_data = Program::serialize_message(NativeTokenMessage::Transfer {
-            to: recipient_id,
-            amount: transfer_amount,
-        })
-        .map_err(|e| SdkError::Internal(e.into()))?;
-
-        let public_actors = BTreeSet::from([
-            Actor::native_balance(dispenser_id),
-            Actor::native_balance(recipient_id),
-        ]);
-        let nonces = BTreeMap::from([(dispenser_id, from_nonce)]);
-        let fee = Some(lee::FeeDeclaration::new(
-            dispenser_id,
-            effective_gas_limit,
-            0,
-            max_fee,
-        ));
-        let mut admission_evidence = Vec::new();
-        if from_nonce == Nonce(0) {
-            admission_evidence.push(PublicAccountEvidence::Key(PublicKey::new_from_private_key(
-                &dispenser_sk,
-            )));
-        }
-
-        let message = lee::public_transaction::Message::new(
-            to_actor,
-            msg_data,
-            public_actors,
-            nonces,
-            fee,
-            admission_evidence,
-        );
-        let message_hash = message.hash();
-        let witness_set = lee::public_transaction::WitnessSet::from_raw_parts(vec![(
-            lee::Signature::new(&dispenser_sk, &message_hash),
-            PublicKey::new_from_private_key(&dispenser_sk),
-        )]);
-        let pub_tx = lee::public_transaction::PublicTransaction::new(message, witness_set);
-        let tx_hash = client
-            .send_transaction(LeeTransaction::Public(pub_tx))
-            .await
-            .map_err(|e| SdkError::Internal(anyhow::anyhow!(e.to_string())))?;
-        Ok((tx_hash, transfer_amount))
+        )));
     }
+
+    let message = lee::public_transaction::Message::new(
+        to_actor,
+        msg_data,
+        public_actors,
+        nonces,
+        fee,
+        admission_evidence,
+    );
+    let message_hash = message.hash();
+    let witness_set = lee::public_transaction::WitnessSet::from_raw_parts(vec![(
+        lee::Signature::new(&dispenser_sk, &message_hash),
+        PublicKey::new_from_private_key(&dispenser_sk),
+    )]);
+    let pub_tx = lee::public_transaction::PublicTransaction::new(message, witness_set);
+    let tx_hash = client
+        .send_transaction(LeeTransaction::Public(pub_tx))
+        .await
+        .map_err(|e| SdkError::Internal(anyhow::anyhow!(e.to_string())))?;
+    Ok((tx_hash, transfer_amount, dispenser_id, from_nonce))
 }
 
 fn load_lee_wallet_public_keys() -> Vec<(AccountId, PrivateKey)> {
