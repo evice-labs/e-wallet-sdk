@@ -357,7 +357,8 @@ Queries the current lifecycle / inclusion status of a transaction directly from 
 - **Inclusion Semantics:**
   - When the sequencer includes the transaction in a block, returns `"status": "confirmed"` and `"block_id": <u64>`.
   - When the transaction is in mempool or pending sequencer batching, returns `"status": "pending"` and `"block_id": null`.
-  - Bypasses transaction payload protobuf deserialization, preventing decoding failures across protocol versions (v0.3 vs v0.4).
+  - When the transaction is not in a block and the sender's on-chain nonce (`get_accounts_nonces`) has already advanced past the submitted `tx_nonce` (tracked in `submitted_tx_nonces`), returns `"status": "dropped"` and `"block_id": null`.
+  - Bypasses transaction payload protobuf deserialization, preventing decoding failures across LEZ v0.4 RPC responses.
 - **Response Format (Confirmed):**
 ```json
 {
