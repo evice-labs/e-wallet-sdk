@@ -36,7 +36,7 @@ e-wallet-sdk/
 │   └── testimonial-program/    # On-chain testimonial smart contract (RISC-V zkVM guest)
 ├── tools/
 │   └── dispatcher/             # Program deployment and on-chain dispatch CLI (`lez-dispatcher`)
-├── deployments.json            # On-chain program deployment registry (testnet 0.3 - 0.4 & dev-env)
+├── deployments.json            # On-chain program deployment registry (testnet 0.4 & dev-env)
 ├── dev-env/                    # Standalone development environment & genesis fixtures
 │   ├── genesis_accounts.json   # Pre-funded Alice, Bob, and shielded circuit accounts
 │   ├── sequencer_config.json   # Standalone genesis parameters and mock channel config
@@ -99,7 +99,7 @@ e-wallet-sdk/
 - In-memory cache with 5-minute TTL, cleared automatically upon wallet lock.
 - User-controllable toggle (`lns_enabled`) with graceful fallback to raw 32-byte account IDs.
 
-#### 7. Resilient Storage, Passphrase Rotation & Cold-Start Encrypted Keystore (`store.rs`, `api.rs`)
+#### 7. Resilient Storage, Passphrase Rotation & Cold-Start Encrypted Keystore (`store.rs`, `api/`)
 
 - Atomic persistence using write-then-rename (`.tmp` → target file) preventing state corruption during unexpected crashes or power loss.
 - Automatic `.bak` backup retention and fallback recovery.
@@ -151,7 +151,7 @@ e-wallet-sdk/
 - **Adoption Evidence Auditing (`crates/evidence-tool`):** Audits on-chain testimonial records against verification criteria (150 distinct submitters across required intervals).
 - **Comprehensive Guide:** Complete build, deploy, and dispatch instructions documented in [`docs/program-deployment.md`](docs/program-deployment.md).
 
-#### 13. Native 4-Way Transfers & Smart Contract Dispatch (`api.rs`, `sdk-ffi`)
+#### 13. Native 4-Way Transfers & Smart Contract Dispatch (`api/`, `sdk-ffi`)
 
 - **Native 4-Way Transfer Execution:** Resolves sender and recipient account privacy via `AccountIdentity::PrivateOwned` and `AccountIdentity::Public`, supporting all four transfer vectors: Public ➝ Public, Public ➝ Private (Shielding), Private ➝ Public (Deshielding), and Private ➝ Private (Shielded).
 - **Strict Guard Clauses:** Prohibits zero-amount transfers (`"Transfer amount must be greater than zero"`) and validates self-transfers to reject identical-account transfers within the same privacy boundary while allowing cross-privacy shielding/unshielding.
@@ -160,32 +160,22 @@ e-wallet-sdk/
 - **Account Selection & Consent:** Resolves connecting dApp account selection prompts via `ApprovalHandler::request_account_selection`, granting `GrantKind::Read` and `GrantKind::Propose` to authorized accounts while filtering internal identity accounts from account listings.
 - **Logos DAO Governance Reference Mini-App:** Demonstrates end-to-end integration of Wallet Provider SDK and Identity Accountability (Domain 6) for anonymous, Sybil-resistant voting via scoped nullifiers and BIP-340 Schnorr ballot attestations.
 
-#### 14. Dynamic Dual-Protocol Compatibility (`v03_compat.rs`, `client.rs`, `api.rs`)
+#### 14. LEZ v0.4 Sequencer Client & Error Preservation (`client.rs`, `api/`)
 
-- **Native Dual-Protocol Engine:** Supports seamless bidirectional transaction compatibility between canonical live testnets running LEZ v0.3.x (`V03ShardModel`, such as `https://testnet.lez.logos.co`) and modern nodes running LEZ v0.4.x (`V04ActorModel`).
-- **Authentic LEZ v0.3 Borsh Wire Layout (`v03_compat.rs`):** Constructs byte-for-byte protocol-compliant wire payloads (`V03ProgramShardSelector`, `V03FeeDeclaration`, `V03Message`, `V03WitnessSet`, `V03PublicTransaction`, `V03LeeTransaction`) using canonical LEZ v0.3 pre-image hash prefixes (`/LEE/v0.3/Message/Public/...`) and signature sets.
-- **Adaptive Protocol Version Probing (`detect_protocol_version`):** Automatically and non-intrusively detects the target sequencer protocol schema at runtime via schema probing and caches the detected protocol version (`V03ShardModel` vs `V04ActorModel`).
+- **LEZ v0.4 Actor-Model Engine:** Targets LEZ (`logos-execution-zone` rev `cb075d5777cb812ba44216429d4f2837ea8518bd`) directly via `TestnetSequencerClient`.
 - **Full RPC Error Preservation:** Preserves `code`, `message`, and `data` in JSON-RPC errors (preventing upstream error masking), allowing granular diagnosis of on-chain sequencer rejections.
-- **Strict Git Commit Pinning:** Locks all upstream LEZ dependencies in `Cargo.toml` to explicit commit hash `5562eeeb200d67c51ba58976ba7b0bb63c19a142` without local path overrides, guaranteeing clean reproducible upstream compatibility.
 - **Universal Account Identifier Resolution (`resolve_account` / `e_wallet_resolve_account`):** Unified resolution accepting raw Base58, prefixed `Public/...`, `Private/...`, or `*.lez` domain names, returning canonical address, privacy type, label, and local keystore ownership.
 - **Shielded + Public Balance Aggregation:** Aggregates zero-knowledge circuit shielded pool and public pool balances for private accounts with formatted thousand-separator presentation.
 
-#### 15. Dynamic Fee Quoting & Gas Baseline Calibration (`api.rs`, `store.rs`, `v03_compat.rs`)
+#### 15. Dynamic Fee Quoting & Gas Baseline Calibration (`api/`, `store.rs`)
 
-- **Calibrated Gas Limit Baseline (`DEFAULT_WALLET_GAS_LIMIT` = 200,000):** Establishes a robust execution gas baseline (200,000 units) that accommodates both standard transfers (~27,000 gas) and smart contract executions, paired with dynamic on-chain fee calculation (`v03_max_fee_for` / `get_fee_state`) preventing `MaxFeeBelowReserve` while staying well within user balances to avoid `PayerCannotFund`.
+- **Calibrated Gas Limit Baseline (`DEFAULT_WALLET_GAS_LIMIT` = 34,000):** Establishes a default execution gas baseline paired with dynamic on-chain fee calculation (`get_fee_state`) preventing `MaxFeeBelowReserve` while staying well within user balances to avoid `PayerCannotFund`.
 - **Idiomatic Upstream Config Overrides:** Injects the effective gas limit into upstream `WalletCore` via `WalletConfigOverrides` during `open_or_init` and `create_wallet`, ensuring active in-memory transactions match on-chain fee requirements.
 - **Dynamic Configuration & C-ABI FFI:** Exposes `get_gas_limit()` and `set_gas_limit(limit: u64)` across SDK Engine and C FFI (`e_wallet_get_gas_limit`, `e_wallet_set_gas_limit`) with persistent override storage in `sdk_state.json`.
 
-#### 16. Testnet v0.3 & v0.4 Sequencer Compatibility Layer (`client.rs`, `v03_compat.rs`)
+#### 16. Sequencer Transaction Reconciliation (`api/`, `sdk-ffi`)
 
-- **Multi-Endpoint RPC Resilience:** Implements `TestnetSequencerClient` featuring dynamic RPC endpoint failover with jittered exponential backoff across configured sequencer nodes.
-- **Wire-Format Normalization:** Dynamically normalizes wire-format discrepancies between LEZ v0.3 (`shards`) and v0.4 (`actor_states`), preventing deserialization crashes on live networks.
-- **Automatic Protocol Version Detection:** Probes sequencer capabilities at startup and caches protocol modes (`V03ShardModel` vs `V04ActorModel`) for transparent block, transaction, and publication RPC routing.
-- **Legacy Storage Migration (`v03_compat`):** Provides automated migration facilities upgrading v0.3 wallet structures into v0.4 Actor-model format without requiring wallet re-derivation.
-
-#### 17. Protocol-Adaptive Sequencer Transaction Reconciliation (`api.rs`, `sdk-ffi`)
-
-- **Protocol-Adaptive Inclusion Querying (`get_transaction_status` / `e_wallet_get_transaction_status`):** Queries sequencer block inclusion using direct JSON-RPC `getTransaction` without failing on protobuf payload schema discrepancies between LEZ v0.3 and v0.4.
+- **Direct Inclusion Querying (`get_transaction_status` / `e_wallet_get_transaction_status`):** Queries sequencer block inclusion using direct JSON-RPC `getTransaction`.
 - **Accurate Lifecycle States:** Distinguishes between transactions pending in the mempool (`status: "pending"`, `block_id: null`) and transactions committed into blocks (`status: "confirmed"`, `block_id: <u64>`).
 - **Unified Engine Single Source of Truth:** Powers consistent status determination across all on-chain actions (transfers, L1 $\to$ LEZ channel bridge deposits, contract interactions) with zero mock fallbacks.
 

@@ -668,11 +668,24 @@ pub async fn main() -> Result<()> {
                 .await
                 .map_err(|e| anyhow::anyhow!("Transfer proposal error: {:?}", e))?;
 
-            tokio::time::sleep(Duration::from_millis(50)).await;
-            let status = engine
+            let mut status = engine
                 .get_request_status(&req_id)
                 .await
                 .map_err(|e| anyhow::anyhow!("Get status error: {:?}", e))?;
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+            while matches!(
+                status,
+                sdk_engine::request::RequestStatus::PendingApproval
+                    | sdk_engine::request::RequestStatus::Approved
+                    | sdk_engine::request::RequestStatus::Submitted { .. }
+            ) && tokio::time::Instant::now() < deadline
+            {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                status = engine
+                    .get_request_status(&req_id)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("Get status error: {:?}", e))?;
+            }
 
             println!("\n╔══════════════════════════════════════════════════════════╗");
             println!("║                  TRANSFER PROPOSAL RESULT                ║");

@@ -1,91 +1,31 @@
-//! Resilient sequencer client wrapper that provides backward compatibility
-//! between the SDK and testnet sequencers returning legacy response formats.
+//! Sequencer client wrapper for LEZ v0.4.
 
-use common::{HashType, PageLimit, block::Block, transaction::LeeTransaction};
-use jsonrpsee::core::client::ClientT;
-use jsonrpsee::rpc_params;
-use lee::{Account, AccountId, Actor, EncryptedNote, ProgramId, Publication};
+use common::{
+    HashType, PageLimit,
+    block::{Block, TransactionReceipt},
+    transaction::LeeTransaction,
+};
+use lee::{Account, AccountId, Actor, EncryptedNote, ProgramId, PublicationsPage};
 use lee_core::{
     BlockId, Commitment, CommitmentPosition, CommitmentSetDigest, MembershipProof, account::Nonce,
 };
 use sequencer_service_rpc::{ClientError, FeeStateQuote, RpcClient, SequencerClient};
 use std::collections::BTreeMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use wallet::WalletSequencerClient;
 
-/// The protocol version detected from the sequencer RPC response schema.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SequencerProtocolVersion {
-    V03ShardModel,
-    V04ActorModel,
-}
-
-/// Sequencer client wrapper that adapts legacy testnet RPC formats (`shards` field, 2-tuple proofs)
-/// to the modern Actor-model wallet traits seamlessly, with adaptive protocol version detection.
+/// Sequencer client wrapper over [`SequencerClient`] with formatted RPC error reporting.
 #[derive(Clone)]
 pub struct TestnetSequencerClient {
     inner: SequencerClient,
-    protocol_version: Arc<RwLock<Option<SequencerProtocolVersion>>>,
 }
 
 impl TestnetSequencerClient {
     pub fn new(inner: SequencerClient) -> Self {
-        Self {
-            inner,
-            protocol_version: Arc::new(RwLock::new(None)),
-        }
+        Self { inner }
     }
 
     pub fn inner(&self) -> &SequencerClient {
         &self.inner
-    }
-
-    /// Dynamically detects whether the connected sequencer speaks the LEZ v0.3 (shard model)
-    /// or LEZ v0.4 (actor model) protocol by inspecting the schema of account states.
-    pub async fn detect_protocol_version(&self) -> SequencerProtocolVersion {
-        {
-            let lock = self.protocol_version.read().await;
-            if let Some(version) = *lock {
-                return version;
-            }
-        }
-
-        let probe_target = AccountId::default();
-        let version = match self
-            .inner
-            .request::<Option<serde_json::Value>, _>("getAccount", rpc_params![probe_target])
-            .await
-        {
-            Ok(Some(v)) => {
-                if v.get("data")
-                    .and_then(|d| d.as_object())
-                    .is_some_and(|o| o.contains_key("shards"))
-                {
-                    SequencerProtocolVersion::V03ShardModel
-                } else {
-                    SequencerProtocolVersion::V04ActorModel
-                }
-            }
-            Ok(None) => SequencerProtocolVersion::V03ShardModel,
-            Err(_) => SequencerProtocolVersion::V03ShardModel,
-        };
-
-        let mut lock = self.protocol_version.write().await;
-        *lock = Some(version);
-        version
-    }
-
-    /// Dispatches a raw, pre-serialized base64 Borsh transaction payload directly to
-    /// the sequencer's `sendTransaction` JSON-RPC endpoint.
-    pub async fn send_raw_transaction(
-        &self,
-        base64_payload: String,
-    ) -> Result<HashType, ClientError> {
-        self.inner
-            .request("sendTransaction", rpc_params![base64_payload])
-            .await
-            .map_err(Self::format_client_error)
     }
 
     pub fn format_client_error(err: ClientError) -> ClientError {
@@ -113,20 +53,6 @@ impl WalletSequencerClient for TestnetSequencerClient {
     }
 
     async fn get_block(&self, block_id: BlockId) -> Result<Option<Block>, Self::Error> {
-        let version = self.detect_protocol_version().await;
-        if version == SequencerProtocolVersion::V03ShardModel {
-            let res: Option<String> = self
-                .inner
-                .request("getBlock", rpc_params![block_id])
-                .await
-                .map_err(Self::format_client_error)?;
-            return match res {
-                Some(b64) => crate::v03_compat::decode_v03_block(&b64)
-                    .map(Some)
-                    .map_err(|e| ClientError::Custom(format!("v0.3 getBlock error: {}", e))),
-                None => Ok(None),
-            };
-        }
         RpcClient::get_block(&self.inner, block_id).await
     }
 
@@ -135,21 +61,6 @@ impl WalletSequencerClient for TestnetSequencerClient {
         start_block_id: BlockId,
         end_block_id: BlockId,
     ) -> Result<Vec<Block>, Self::Error> {
-        let version = self.detect_protocol_version().await;
-        if version == SequencerProtocolVersion::V03ShardModel {
-            let raw_blocks: Vec<String> = self
-                .inner
-                .request("getBlockRange", rpc_params![start_block_id, end_block_id])
-                .await
-                .map_err(Self::format_client_error)?;
-            let mut blocks = Vec::with_capacity(raw_blocks.len());
-            for b64 in raw_blocks {
-                let block = crate::v03_compat::decode_v03_block(&b64)
-                    .map_err(|e| ClientError::Custom(format!("v0.3 getBlockRange error: {}", e)))?;
-                blocks.push(block);
-            }
-            return Ok(blocks);
-        }
         RpcClient::get_block_range(&self.inner, start_block_id, end_block_id).await
     }
 
@@ -165,27 +76,14 @@ impl WalletSequencerClient for TestnetSequencerClient {
         &self,
         tx_hash: HashType,
     ) -> Result<Option<(LeeTransaction, BlockId)>, Self::Error> {
-        let version = self.detect_protocol_version().await;
-        if version == SequencerProtocolVersion::V03ShardModel {
-            let res: Option<(String, BlockId)> = self
-                .inner
-                .request("getTransaction", rpc_params![tx_hash])
-                .await
-                .map_err(Self::format_client_error)?;
-            return match res {
-                Some((raw_b64, block_id)) => {
-                    let tx = crate::v03_compat::decode_v03_transaction_to_adapted(
-                        &raw_b64, tx_hash, block_id,
-                    )
-                    .map_err(|e| {
-                        ClientError::Custom(format!("v0.3 getTransaction error: {}", e))
-                    })?;
-                    Ok(Some((tx, block_id)))
-                }
-                None => Ok(None),
-            };
-        }
         RpcClient::get_transaction(&self.inner, tx_hash).await
+    }
+
+    async fn get_transaction_receipt(
+        &self,
+        tx_hash: HashType,
+    ) -> Result<Option<TransactionReceipt>, Self::Error> {
+        RpcClient::get_transaction_receipt(&self.inner, tx_hash).await
     }
 
     async fn get_accounts_nonces(
@@ -199,20 +97,7 @@ impl WalletSequencerClient for TestnetSequencerClient {
         &self,
         actor_state_selector: Actor,
     ) -> Result<Option<Account>, Self::Error> {
-        let val: Option<serde_json::Value> = self
-            .inner
-            .request("getAccountView", rpc_params![actor_state_selector])
-            .await?;
-        match val {
-            Some(mut v) => {
-                normalize_account_json(&mut v);
-                let acc: Account = serde_json::from_value(v).map_err(|e| {
-                    ClientError::Custom(format!("getAccountView parse error: {}", e))
-                })?;
-                Ok(Some(acc))
-            }
-            None => Ok(None),
-        }
+        RpcClient::get_account_view(&self.inner, actor_state_selector).await
     }
 
     async fn get_proofs_and_root(
@@ -227,45 +112,7 @@ impl WalletSequencerClient for TestnetSequencerClient {
         ),
         Self::Error,
     > {
-        let val: serde_json::Value = self
-            .inner
-            .request(
-                "getProofsAndRoot",
-                rpc_params![commitments, message_positions],
-            )
-            .await?;
-        if let Some(arr) = val.as_array() {
-            if arr.len() == 2 {
-                // Testnet sequencer returns 2-tuple: (proofs, root)
-                let proofs: Vec<Option<MembershipProof>> = serde_json::from_value(arr[0].clone())
-                    .map_err(|e| {
-                    ClientError::Custom(format!("getProofsAndRoot proofs error: {}", e))
-                })?;
-                let root: CommitmentSetDigest =
-                    serde_json::from_value(arr[1].clone()).map_err(|e| {
-                        ClientError::Custom(format!("getProofsAndRoot root error: {}", e))
-                    })?;
-                return Ok((proofs, Vec::new(), root));
-            } else if arr.len() == 3 {
-                // Updated sequencer returns 3-tuple: (proofs, message_paths, root)
-                let proofs: Vec<Option<MembershipProof>> = serde_json::from_value(arr[0].clone())
-                    .map_err(|e| {
-                    ClientError::Custom(format!("getProofsAndRoot proofs error: {}", e))
-                })?;
-                let msg_paths: Vec<Option<MembershipProof>> =
-                    serde_json::from_value(arr[1].clone()).map_err(|e| {
-                        ClientError::Custom(format!("getProofsAndRoot message_paths error: {}", e))
-                    })?;
-                let root: CommitmentSetDigest =
-                    serde_json::from_value(arr[2].clone()).map_err(|e| {
-                        ClientError::Custom(format!("getProofsAndRoot root error: {}", e))
-                    })?;
-                return Ok((proofs, msg_paths, root));
-            }
-        }
-        Err(ClientError::Custom(
-            "Unexpected getProofsAndRoot response shape from sequencer".to_string(),
-        ))
+        RpcClient::get_proofs_and_root(&self.inner, commitments, message_positions).await
     }
 
     async fn get_fee_state(&self) -> Result<FeeStateQuote, Self::Error> {
@@ -273,19 +120,7 @@ impl WalletSequencerClient for TestnetSequencerClient {
     }
 
     async fn get_account(&self, account_id: AccountId) -> Result<Option<Account>, Self::Error> {
-        let val: Option<serde_json::Value> = self
-            .inner
-            .request("getAccount", rpc_params![account_id])
-            .await?;
-        match val {
-            Some(mut v) => {
-                normalize_account_json(&mut v);
-                let acc: Account = serde_json::from_value(v)
-                    .map_err(|e| ClientError::Custom(format!("getAccount parse error: {}", e)))?;
-                Ok(Some(acc))
-            }
-            None => Ok(None),
-        }
+        RpcClient::get_account(&self.inner, account_id).await
     }
 
     async fn get_program_ids(&self) -> Result<BTreeMap<String, ProgramId>, Self::Error> {
@@ -296,14 +131,15 @@ impl WalletSequencerClient for TestnetSequencerClient {
         &self,
         from_position: CommitmentPosition,
         limit: PageLimit,
-    ) -> Result<Vec<(CommitmentPosition, Publication)>, Self::Error> {
-        let version = self.detect_protocol_version().await;
-        if version == SequencerProtocolVersion::V03ShardModel {
-            return Ok(Vec::new());
-        }
+    ) -> Result<PublicationsPage, Self::Error> {
         match RpcClient::get_publications(&self.inner, from_position, limit).await {
             Ok(pubs) => Ok(pubs),
-            Err(ClientError::Call(ref err_obj)) if err_obj.code() == -32601 => Ok(Vec::new()),
+            Err(ClientError::Call(ref err_obj)) if err_obj.code() == -32601 => {
+                Ok(PublicationsPage {
+                    publications: Vec::new(),
+                    recovery_bindings: BTreeMap::new(),
+                })
+            }
             Err(e) => Err(e),
         }
     }
@@ -312,10 +148,6 @@ impl WalletSequencerClient for TestnetSequencerClient {
         &self,
         address: AccountId,
     ) -> Result<Option<EncryptedNote>, Self::Error> {
-        let version = self.detect_protocol_version().await;
-        if version == SequencerProtocolVersion::V03ShardModel {
-            return Ok(None);
-        }
         match RpcClient::get_recovery_binding(&self.inner, address).await {
             Ok(binding) => Ok(binding),
             Err(ClientError::Call(ref err_obj)) if err_obj.code() == -32601 => Ok(None),
@@ -324,32 +156,9 @@ impl WalletSequencerClient for TestnetSequencerClient {
     }
 }
 
-fn normalize_account_json(val: &mut serde_json::Value) {
-    if let Some(obj) = val.get_mut("data").and_then(|d| d.as_object_mut())
-        && let Some(shards) = obj.remove("shards")
-    {
-        obj.insert("actor_states".to_string(), shards);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_normalize_legacy_account_shards() {
-        let mut val = serde_json::json!({
-            "nonce": 42,
-            "data": {
-                "shards": {
-                    "some_program": 100
-                }
-            }
-        });
-        normalize_account_json(&mut val);
-        assert!(val["data"].get("actor_states").is_some());
-        assert!(val["data"].get("shards").is_none());
-    }
 
     #[test]
     fn test_format_client_error_preserves_error_data() {
@@ -366,91 +175,6 @@ mod tests {
                 assert!(msg.contains("Unexpected length of input"));
             }
             _ => panic!("Expected ClientError::Custom"),
-        }
-    }
-
-    #[tokio::test]
-    async fn test_live_sequencer_protocol_detection() {
-        let url = "https://testnet.lez.logos.co";
-        if let Ok(inner) = jsonrpsee::http_client::HttpClientBuilder::default().build(url) {
-            let client = TestnetSequencerClient::new(inner);
-            let version = client.detect_protocol_version().await;
-            assert_eq!(version, SequencerProtocolVersion::V03ShardModel);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_live_send_raw_v03_transaction_format_validation() {
-        let url = "https://testnet.lez.logos.co";
-        if let Ok(inner) = jsonrpsee::http_client::HttpClientBuilder::default().build(url) {
-            let client = TestnetSequencerClient::new(inner);
-            let key = lee::PrivateKey::new_os_random();
-            let pubkey = lee::PublicKey::new_from_private_key(&key);
-            let from = lee::AccountId::from(&pubkey);
-            let to = lee::AccountId::new([5u8; 32]);
-            let (payload, _hash) = crate::v03_compat::build_and_sign_v03_native_transfer(
-                from,
-                to,
-                1000,
-                lee_core::account::Nonce(0),
-                &key,
-                200_000,
-                8,
-            )
-            .expect("build transfer");
-
-            let res = client.send_raw_transaction(payload).await;
-            if let Err(e) = res {
-                let err_str = e.to_string();
-                assert!(
-                    !err_str.contains("Invalid params"),
-                    "Must not fail with Invalid params, got: {}",
-                    err_str
-                );
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn test_live_v03_get_block_and_block_range() {
-        let url = "https://testnet.lez.logos.co";
-        if let Ok(inner) = jsonrpsee::http_client::HttpClientBuilder::default().build(url) {
-            let client = TestnetSequencerClient::new(inner);
-            let version = client.detect_protocol_version().await;
-            assert_eq!(version, SequencerProtocolVersion::V03ShardModel);
-
-            // Test get_block
-            let block = client
-                .get_block(78389)
-                .await
-                .expect("get_block must succeed");
-            assert!(block.is_some());
-            let b = block.unwrap();
-            assert_eq!(b.header.block_id, 78389);
-
-            // Test get_block_range
-            let blocks = client
-                .get_block_range(78388, 78390)
-                .await
-                .expect("get_block_range must succeed");
-            assert_eq!(blocks.len(), 3);
-            assert_eq!(blocks[0].header.block_id, 78388);
-            assert_eq!(blocks[1].header.block_id, 78389);
-            assert_eq!(blocks[2].header.block_id, 78390);
-
-            // Test get_publications (must return Ok(empty))
-            let pubs = client
-                .get_publications(0, 10)
-                .await
-                .expect("get_publications must succeed");
-            assert!(pubs.is_empty());
-
-            // Test get_recovery_binding (must return Ok(None))
-            let binding = client
-                .get_recovery_binding(lee::AccountId::default())
-                .await
-                .expect("get_recovery_binding must succeed");
-            assert!(binding.is_none());
         }
     }
 }

@@ -125,7 +125,7 @@ e-wallet-sdk/
 
 ## 4. Deep-Dive: Core Engine Subsystems (`sdk-engine`)
 
-### 4.1 Orchestrator & Dual-API Architecture (`api.rs`)
+### 4.1 Orchestrator & Dual-API Architecture (`api/`)
 
 The central engine is encapsulated by `SdkEngine`, maintaining an `Arc`-wrapped, thread-safe state container. It cleanly partitions operational capabilities into two distinct trait interfaces:
 
@@ -368,7 +368,7 @@ IdentityCommitment                               SHA-256("lez/identity/v1/scoped
 5. **BIP-340 Schnorr Attestations (`signature.rs`):**
    - Derives a deterministic scalar attestation key per scope.
    - Signs arbitrary messages (e.g., anonymous votes, reputation claims) verified against the scope's public key.
-6. **Granular Permission Integration (`session.rs`, `api.rs`):**
+6. **Granular Permission Integration (`session.rs`, `api/`):**
    - Governed by `GrantKind::IdentityRead` (inspect commitment and derive scoped nullifier) and `GrantKind::IdentityPropose` (sign attestation or construct registration payload).
    - Informs users with clear consent disclosures prior to identity generation.
 
@@ -472,20 +472,15 @@ To fulfill on-chain adoption verification, verifiable attribution, and automated
 4. **Adoption Evidence Auditing (`crates/evidence-tool`):**
    - Command-line audit utility scanning on-chain sequencer state, querying testimonial records matching `SUBMISSION_ID`, and verifying distinct submitter accounts and temporal dispersion criteria.
 
-### 4.14 Resilient Sequencer Client & RPC Compatibility (`client.rs`)
+### 4.14 Resilient Sequencer Client (`client.rs`)
 
-To ensure seamless, resilient interoperation between modern SDK engine traits and live LEZ testnet sequencer deployment revisions without requiring fork modifications to the upstream `logos-execution-zone` codebase, `sdk-engine` implements `TestnetSequencerClient`.
+To ensure clean interoperation between SDK engine traits and LEZ v0.4 sequencer deployments without requiring fork modifications to the upstream `logos-execution-zone` codebase, `sdk-engine` implements `TestnetSequencerClient`.
 
 1. **Idiomatic Extension via `WalletSequencerClient`:**
-   - Wraps `sequencer_service_rpc::SequencerClient` and implements `wallet::WalletSequencerClient`.
-   - `WalletCore` is generic over `C: WalletSequencerClient`, allowing `SdkEngine` to inject this adaptor via `WalletCore::new_update_chain_with_client` and `WalletCore::new_init_storage_with_client`.
-2. **Backward-Compatible RPC Payloads:**
-   - **Account Serialization (`shards` vs `actor_states`):** Sequencer testnets returning account payloads with the `shards` field are normalized dynamically to `actor_states` at the JSON level before passing to `Account` deserialization, avoiding `unknown field 'shards', expected 'actor_states'` deserialization rejections.
-   - **Block & Block Range Wire Adaptation (`getBlock` & `getBlockRange`):** Sequencers speaking the LEZ v0.3 protocol (`V03ShardModel`, such as `https://testnet.lez.logos.co`) return base64-encoded v0.3 `Block` Borsh bytes that do not contain the modern v0.4 `reverted: Vec<u64>` field or Actor-model transactions. `TestnetSequencerClient` intercepts block queries and decodes them via `v03_compat::decode_v03_block`, extracting canonical header parameters (`block_id`, `prev_block_hash`, `hash`, `timestamp`, `bedrock_status`) and mapping them into the wallet poller structures without length mismatch crashes (`Unexpected length of input at line 1 column 1484`).
-   - **Missing Method Resilience (`getPublications` & `getRecoveryBinding`):** Gracefully returns empty collections / `None` on v0.3 sequencers where these modern Actor-model RPC methods do not exist (HTTP error `-32601 Method not found`).
-   - **Proof Query Tuple Compatibility (`getProofsAndRoot`):** Adapts both legacy 2-tuple `(proofs, root)` and 3-tuple `(proofs, message_paths, root)` return signatures from sequencer RPC calls into canonical proof structures.
-3. **Pure Upstream Commit Pinning:**
-   - All external LEZ dependencies in `Cargo.toml` are pinned to explicit Git commits (`rev = "5562eeeb200d67c51ba58976ba7b0bb63c19a142"`) with zero local directory patches or workspace overrides.
+   - Wraps `sequencer_service_rpc::SequencerClient` and implements `wallet::WalletSequencerClient`, preserving detailed JSON-RPC error codes and data via `format_client_error`.
+   - `WalletCore` is generic over `C: WalletSequencerClient`, allowing `SdkEngine` to inject this client via `WalletCore::new_update_chain_with_client` and `WalletCore::new_init_storage_with_client`.
+2. **Pure Upstream Commit Pinning:**
+   - All external LEZ dependencies in `Cargo.toml` are pinned to LEZ (`rev = "cb075d5777cb812ba44216429d4f2837ea8518bd"`) with zero local directory patches or workspace overrides.
 
 ### 4.15 Protocol State Separation & Invariant Guardrails
 
@@ -554,11 +549,11 @@ To ensure desktop user interfaces and automated reconcilers receive accurate, no
 | **Typo-Induced Wallet Lockout**                        | Mandatory two-step password confirmation prompt before initial storage derivation.                                                                                                | `cli/src/main.rs`                                                          |
 | **Accidental Storage Overwrite**                       | Guard checks pre-existing files; requires explicit `--force` flag before re-initializing existing directories.                                                                    | `cli/src/main.rs`                                                          |
 | **False Success on Empty Directory**                   | `ensure_wallet_exists` enforces storage verification prior to executing wallet/account operations.                                                                                | `cli/src/main.rs`                                                          |
-| **Keystore Authentication Bypass on Unlock**           | Verifies passphrases against encrypted storage file on disk via `wallet::storage::Storage::from_path`, preventing unauthorized state unlocking with arbitrary passwords.          | `api.rs` (`unlock`)                                                        |
-| **Passphrase Rotation Vulnerability**                  | Validates current password against on-disk keystore before re-encrypting with new credentials; prevents unauthorized passphrase resets.                                           | `api.rs` (`change_password`)                                               |
-| **Unregistered LNS Handle Fund Loss**                  | Pre-flight destination resolution verifies LNS records exist on-chain and hold valid public receiving keys before transaction creation; rejects unresolvable domains immediately. | `api.rs`, `resolve/lns.rs`                                                 |
+| **Keystore Authentication Bypass on Unlock**           | Verifies passphrases against encrypted storage file on disk via `wallet::storage::Storage::from_path`, preventing unauthorized state unlocking with arbitrary passwords.          | `api/owner.rs` (`unlock`)                                                  |
+| **Passphrase Rotation Vulnerability**                  | Validates current password against on-disk keystore before re-encrypting with new credentials; prevents unauthorized passphrase resets.                                           | `api/owner.rs` (`change_password`)                                         |
+| **Unregistered LNS Handle Fund Loss**                  | Pre-flight destination resolution verifies LNS records exist on-chain and hold valid public receiving keys before transaction creation; rejects unresolvable domains immediately. | `api/engine.rs`, `resolve/lns.rs`                                          |
 | **Tampered / Forged LNS Profiles**                     | Authenticated AES-256-GCM tag verification bound to associated data `logos-names/v5/record`, followed by strict `profile.name == input_name` consistency checking.                | `resolve/lns.rs`                                                           |
-| **Asymmetric Deposit Trap (Private Shard Asset Lock)** | Pre-flight transaction validation rejects transparent self-shielding attempts from private accounts; prevents permanent asset lockups on transparent shards.                      | `v03_compat.rs`, `api.rs` |
+| **Asymmetric Deposit Trap (Private Shard Asset Lock)** | Pre-flight transaction validation rejects transparent self-shielding attempts from private accounts; prevents permanent asset lockups on transparent shards.                      | `api/dapp.rs` |
 
 ### 5.2 Privacy Guarantees
 
