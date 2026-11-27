@@ -286,6 +286,17 @@ pub(crate) fn error_json(msg: &str) -> *mut c_char {
     to_c_string(&wrapped.to_string())
 }
 
+pub(crate) fn parse_account_id_str(raw: &str) -> Result<AccountId, String> {
+    let trimmed = raw.trim();
+    let clean = trimmed
+        .strip_prefix("Public/")
+        .or_else(|| trimmed.strip_prefix("public/"))
+        .or_else(|| trimmed.strip_prefix("Private/"))
+        .or_else(|| trimmed.strip_prefix("private/"))
+        .unwrap_or(trimmed);
+    AccountId::from_str(clean).map_err(|e| format!("{:?}", e))
+}
+
 pub(crate) unsafe fn parse_c_str<'a>(ptr: *const c_char) -> Result<&'a str, &'static str> {
     if ptr.is_null() {
         return Err("Null pointer passed as string argument");

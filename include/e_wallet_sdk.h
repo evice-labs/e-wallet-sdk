@@ -78,89 +78,11 @@ char *e_wallet_set_approval_callback(struct FfiSdkEngine *engine,
                                      void *user_data);
 
 /**
- * Get the current gas limit seed configured for transactions.
- */
-uint64_t e_wallet_get_gas_limit(struct FfiSdkEngine *engine);
-
-/**
- * Set the gas limit seed for transactions.
- */
-char *e_wallet_set_gas_limit(struct FfiSdkEngine *engine, uint64_t limit);
-
-/**
  * Submit an approval decision (`1` for Approve, `0` for Reject) for a pending request.
  */
 char *e_wallet_submit_approval_decision(struct FfiSdkEngine *engine,
                                         const char *request_id,
                                         int32_t decision);
-
-/**
- * Create a fresh wallet encrypted under `password`.
- * Returns JSON: `{"ok":true, "mnemonic":"word1 word2 ..."}` or `{"ok":false, "error":"..."}`.
- */
-char *e_wallet_create_wallet(struct FfiSdkEngine *engine, const char *password);
-
-/**
- * Restore a wallet from mnemonic and set password.
- */
-char *e_wallet_restore_wallet(struct FfiSdkEngine *engine,
-                              const char *mnemonic,
-                              const char *password);
-
-/**
- * Lock the wallet, revoking all active sessions and purging secret keys from memory.
- */
-char *e_wallet_lock(struct FfiSdkEngine *engine);
-
-/**
- * Unlock the wallet with password.
- */
-char *e_wallet_unlock(struct FfiSdkEngine *engine, const char *password);
-
-/**
- * Change the wallet encryption password.
- */
-char *e_wallet_change_password(struct FfiSdkEngine *engine,
-                               const char *old_password,
-                               const char *new_password);
-
-/**
- * Create a new public account with an optional label.
- */
-char *e_wallet_create_account_public(struct FfiSdkEngine *engine, const char *label);
-
-/**
- * Create a new private account with an optional label.
- */
-char *e_wallet_create_account_private(struct FfiSdkEngine *engine, const char *label);
-
-/**
- * List all accounts in the wallet with privacy and balances.
- */
-char *e_wallet_list_all_accounts(struct FfiSdkEngine *engine);
-
-/**
- * List all active dApp sessions.
- */
-char *e_wallet_list_sessions(struct FfiSdkEngine *engine);
-
-/**
- * Revoke a specific dApp session by session ID.
- */
-char *e_wallet_revoke_session(struct FfiSdkEngine *engine, const char *session_id);
-
-/**
- * Set a user-friendly label for an account.
- */
-char *e_wallet_set_account_label(struct FfiSdkEngine *engine,
-                                 const char *account_id,
-                                 const char *label,
-                                 bool is_private);
-
-/**
- * Query SDK and network information.
- */
-char *e_wallet_sdk_info(struct FfiSdkEngine *engine);
 
 /**
  * Connect an untrusted caller module and open a session.
@@ -268,6 +190,11 @@ char *e_wallet_register_token_holding(struct FfiSdkEngine *engine,
 char *e_wallet_get_request_status(struct FfiSdkEngine *engine, const char *request_id);
 
 /**
+ * Query the on-chain status of a transaction by its 32-byte hex hash.
+ */
+char *e_wallet_get_transaction_status(struct FfiSdkEngine *engine, const char *tx_hash);
+
+/**
  * Cancel a pending transaction request before approval.
  */
 char *e_wallet_cancel_request(struct FfiSdkEngine *engine, const char *request_id);
@@ -352,6 +279,81 @@ char *e_wallet_pow_status(struct FfiSdkEngine *engine);
 char *e_wallet_channel_deposit(struct FfiSdkEngine *engine,
                                const char *recipient_account_id,
                                const char *amount_str);
+
+uint64_t e_wallet_get_gas_limit(struct FfiSdkEngine *engine);
+
+/**
+ * Set the gas limit seed for transactions.
+ */
+char *e_wallet_set_gas_limit(struct FfiSdkEngine *engine, uint64_t limit);
+
+/**
+ * Create a fresh wallet encrypted under `password`.
+ * Returns JSON: `{"ok":true, "mnemonic":"word1 word2 ..."}` or `{"ok":false, "error":"..."}`.
+ */
+char *e_wallet_create_wallet(struct FfiSdkEngine *engine, const char *password);
+
+/**
+ * Restore a wallet from mnemonic and set password.
+ */
+char *e_wallet_restore_wallet(struct FfiSdkEngine *engine,
+                              const char *mnemonic,
+                              const char *password);
+
+/**
+ * Lock the wallet, revoking all active sessions and purging secret keys from memory.
+ */
+char *e_wallet_lock(struct FfiSdkEngine *engine);
+
+/**
+ * Unlock the wallet with password.
+ */
+char *e_wallet_unlock(struct FfiSdkEngine *engine, const char *password);
+
+/**
+ * Change the wallet encryption password.
+ */
+char *e_wallet_change_password(struct FfiSdkEngine *engine,
+                               const char *old_password,
+                               const char *new_password);
+
+/**
+ * Create a new public account with an optional label.
+ */
+char *e_wallet_create_account_public(struct FfiSdkEngine *engine, const char *label);
+
+/**
+ * Create a new private account with an optional label.
+ */
+char *e_wallet_create_account_private(struct FfiSdkEngine *engine, const char *label);
+
+/**
+ * List all accounts in the wallet with privacy and balances.
+ */
+char *e_wallet_list_all_accounts(struct FfiSdkEngine *engine);
+
+/**
+ * List all active dApp sessions.
+ */
+char *e_wallet_list_sessions(struct FfiSdkEngine *engine);
+
+/**
+ * Revoke a specific dApp session by session ID.
+ */
+char *e_wallet_revoke_session(struct FfiSdkEngine *engine, const char *session_id);
+
+/**
+ * Set a user-friendly label for an account.
+ */
+char *e_wallet_set_account_label(struct FfiSdkEngine *engine,
+                                 const char *account_id,
+                                 const char *label,
+                                 bool is_private);
+
+/**
+ * Query SDK and network information.
+ */
+char *e_wallet_sdk_info(struct FfiSdkEngine *engine);
 
 #ifdef __cplusplus
 }  // extern "C"
