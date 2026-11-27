@@ -162,21 +162,21 @@ e-wallet-sdk/
 
 #### 14. LEZ v0.4 Sequencer Client & Error Preservation (`client.rs`, `api/`)
 
-- **LEZ v0.4 Actor-Model Engine:** Targets LEZ (`logos-execution-zone` rev `cb075d5777cb812ba44216429d4f2837ea8518bd`) directly via `TestnetSequencerClient`.
+- **LEZ v0.4 Actor-Model Engine:** Targets official LEZ `v0.4.0` (`logos-execution-zone` rev `a255b42c0fc80d1cb219454a3a1f5ec3b5d92115`) directly via `TestnetSequencerClient`.
 - **Full RPC Error Preservation:** Preserves `code`, `message`, and `data` in JSON-RPC errors (preventing upstream error masking), allowing granular diagnosis of on-chain sequencer rejections.
 - **Universal Account Identifier Resolution (`resolve_account` / `e_wallet_resolve_account`):** Unified resolution accepting raw Base58, prefixed `Public/...`, `Private/...`, or `*.lez` domain names, returning canonical address, privacy type, label, and local keystore ownership.
 - **Shielded + Public Balance Aggregation:** Aggregates zero-knowledge circuit shielded pool and public pool balances for private accounts with formatted thousand-separator presentation.
 
 #### 15. Dynamic Fee Quoting & Gas Baseline Calibration (`api/`, `store.rs`)
 
-- **Calibrated Gas Limit Baseline (`DEFAULT_WALLET_GAS_LIMIT` = 34,000):** Establishes a default execution gas baseline paired with dynamic on-chain fee calculation (`get_fee_state`) preventing `MaxFeeBelowReserve` while staying well within user balances to avoid `PayerCannotFund`.
+- **Calibrated Gas Limit Baseline (`DEFAULT_WALLET_GAS_LIMIT` = `wallet::DEFAULT_GAS_LIMIT` = 10,000,000):** Establishes the default execution gas baseline aligned with `fee_core::market::MAX_GAS_EXEC`; public transactions are metered by dry-run and refunded for excess gas, paired with dynamic on-chain fee calculation (`get_fee_state`) to prevent underfunded reserves.
 - **Idiomatic Upstream Config Overrides:** Injects the effective gas limit into upstream `WalletCore` via `WalletConfigOverrides` during `open_or_init` and `create_wallet`, ensuring active in-memory transactions match on-chain fee requirements.
 - **Dynamic Configuration & C-ABI FFI:** Exposes `get_gas_limit()` and `set_gas_limit(limit: u64)` across SDK Engine and C FFI (`e_wallet_get_gas_limit`, `e_wallet_set_gas_limit`) with persistent override storage in `sdk_state.json`.
 
 #### 16. Sequencer Transaction Reconciliation (`api/`, `sdk-ffi`)
 
-- **Direct Inclusion Querying (`get_transaction_status` / `e_wallet_get_transaction_status`):** Queries sequencer block inclusion using direct JSON-RPC `getTransaction`.
-- **Accurate Lifecycle States:** Distinguishes between transactions pending in the mempool (`status: "pending"`, `block_id: null`) and transactions committed into blocks (`status: "confirmed"`, `block_id: <u64>`).
+- **Direct Inclusion Querying (`get_transaction_status` / `e_wallet_get_transaction_status`):** Queries sequencer block inclusion via `client.get_transaction` and checks sender nonce progression (`get_accounts_nonces`).
+- **Accurate Lifecycle States:** Distinguishes between transactions pending in the mempool (`status: "pending"`, `block_id: null`), dropped transactions (`status: "dropped"` when on-chain nonce advances past submitted nonce), and transactions committed into blocks (`status: "confirmed"`, `block_id: <u64>`).
 - **Unified Engine Single Source of Truth:** Powers consistent status determination across all on-chain actions (transfers, L1 $\to$ LEZ channel bridge deposits, contract interactions) with zero mock fallbacks.
 
 ## Quick Start
@@ -184,7 +184,7 @@ e-wallet-sdk/
 ### Prerequisites
 
 - **Rust Toolchain:** Pinned to Rust 1.98.1+ via `rust-toolchain.toml`.
-- **LEZ Monorepo:** Pinned directly via Cargo Git dependencies tracking `https://github.com/logos-blockchain/logos-execution-zone` (commit `5562eee`), making the SDK completely standalone without requiring local sibling checkouts.
+- **LEZ Monorepo:** Pinned directly via Cargo Git dependencies tracking `https://github.com/logos-blockchain/logos-execution-zone` (`v0.4.0`, rev `a255b42c0fc80d1cb219454a3a1f5ec3b5d92115`), making the SDK completely standalone without requiring local sibling checkouts.
 
 ### Building & Checking
 
@@ -197,7 +197,7 @@ cd e-wallet-sdk
 
 # Using Just task runner
 just build            # Compile all workspace crates
-just test             # Run full test suite (all 50 tests across engine, ffi, and integration-tests)
+just test             # Run full workspace test suite (58 unit/integration tests + 1 ignored live sequencer test)
 just lint             # Check clippy lints with warnings as errors
 just header           # Generate C/C++ FFI header via cbindgen
 
@@ -222,7 +222,7 @@ just dev-health
 just dev-logs
 
 # Disburse initial funds from Genesis Alice to an account address or .lez name
-just dev-fund Public/891ae258f92ca8447af6cf09c41d96b3a06187d098b91ab2cc17b42e3c4a2fa1 10000000
+just dev-fund Public/6AtC7ekAeMXh9QgiBoUnsb69SVEnCy9DMhCy4nmJDbkh 10000000
 
 # Stop the local sequencer
 just dev-stop         # or: docker compose down

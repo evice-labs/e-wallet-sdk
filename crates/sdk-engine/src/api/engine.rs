@@ -83,8 +83,8 @@ impl SdkEngine {
     ) -> Option<crate::identity::IdentitySecret> {
         let key_chain = wallet.storage().key_chain();
         let first_pub_id = key_chain.public_account_ids().next().map(|(id, _)| id)?;
-        let signing_key = wallet.get_account_public_signing_key(first_pub_id)?;
-        let key_bytes = serde_json::to_vec(signing_key).ok()?;
+        let secret = key_chain.pub_account_secret(first_pub_id)?;
+        let key_bytes = serde_json::to_vec(secret).ok()?;
         Some(crate::identity::derive_identity_secret(&key_bytes))
     }
 
@@ -124,25 +124,15 @@ impl SdkEngine {
             std::fs::create_dir_all(&data_dir).map_err(|e| SdkError::Internal(e.into()))?;
         }
 
-        let mut store =
+        let store =
             PersistentStore::open(config.sdk_state_path.clone()).map_err(SdkError::Internal)?;
-        let effective_gas_limit = store
-            .state()
-            .gas_limit_override
-            .unwrap_or(DEFAULT_WALLET_GAS_LIMIT);
-        let overrides = wallet::config::WalletConfigOverrides {
-            gas_limit: Some(effective_gas_limit),
+        let overrides = WalletConfigOverrides {
+            gas_limit: store.state().gas_limit_override,
             ..Default::default()
         };
+        let client = build_wallet_client(&config.wallet_config_path, &overrides)?;
 
-        let mut wallet_config =
-            WalletConfig::from_path_or_initialize_default(&config.wallet_config_path)
-                .map_err(SdkError::Internal)?;
-        wallet_config.apply_overrides(overrides.clone());
-
-        let inner_client =
-            WalletCore::client_from_config(&wallet_config).map_err(SdkError::Internal)?;
-        let client = TestnetSequencerClient::new(inner_client);
+        let mut store = store;
 
         let (wallet, initial_identity) = if config.wallet_storage_path.exists() {
             match WalletCore::new_update_chain_with_client(
@@ -319,35 +309,19 @@ impl SdkEngine {
         let store = self.store.lock().await;
         let custom_labels = &store.state().account_labels;
 
-        let is_private_local = wallet
-            .storage()
-            .key_chain()
-            .private_account(account_id)
-            .is_some()
-            || wallet
-                .storage()
-                .key_chain()
-                .shared_private_account(account_id)
-                .is_some();
+        let is_private_local = is_private_account_local(wallet.storage().key_chain(), account_id);
         let is_public_local = wallet
             .storage()
             .key_chain()
-            .pub_account_signing_key(account_id)
+            .pub_account_secret(account_id)
             .is_some();
 
         let privacy = if let Some(p) = explicit_privacy {
             p
         } else if is_private_local {
             AccountPrivacy::Private
-        } else if is_public_local {
-            AccountPrivacy::Public
         } else {
-            // Check if account has public representation on-chain
-            if let Ok(Some(_)) = wallet.get_account_public(account_id).await {
-                AccountPrivacy::Public
-            } else {
-                AccountPrivacy::Public
-            }
+            AccountPrivacy::Public
         };
 
         let is_local = is_private_local || is_public_local;
@@ -357,20 +331,7 @@ impl SdkEngine {
         };
         let canonical_address = format!("{}/{}", prefix, account_id);
 
-        let label = custom_labels
-            .get(&account_id.to_string())
-            .cloned()
-            .or_else(|| {
-                let target_privacy = match privacy {
-                    AccountPrivacy::Public => AccountIdWithPrivacy::Public(account_id),
-                    AccountPrivacy::Private => AccountIdWithPrivacy::Private(account_id),
-                };
-                wallet
-                    .storage()
-                    .labels_for_account(target_privacy)
-                    .next()
-                    .map(|l| l.as_ref().to_string())
-            });
+        let label = resolve_account_label(wallet, custom_labels, account_id, &privacy);
 
         Ok(ResolvedAccountInfo {
             account_id,
@@ -379,6 +340,19 @@ impl SdkEngine {
             label,
             is_local,
         })
+    }
+
+    pub(super) async fn grant_internal_ui_sessions(&self, account_id: AccountId) {
+        for s in self.sessions.list().await {
+            if s.caller_identity == "internal_wallet_ui" {
+                self.sessions
+                    .update(&s.id, |sess| {
+                        sess.add_grant(account_id, GrantKind::Read);
+                        sess.add_grant(account_id, GrantKind::Propose);
+                    })
+                    .await;
+            }
+        }
     }
 
     pub fn sessions(&self) -> &SessionStore {

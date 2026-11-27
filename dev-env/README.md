@@ -15,10 +15,10 @@ This directory provides the **supporting configuration fixtures and accounts** f
 
 All accounts below are provisioned at genesis in [`sequencer_config.json`](sequencer_config.json) with substantial native token balances:
 
-| Account Alias  | Type    | Account ID / Address                                                      | Private Key (Hex)                                                  | Initial Balance          | Role                               |
+| Account Alias  | Type    | Account ID / Address                                                      | PublicAccountSecret (Hex)                                          | Initial Balance          | Role                               |
 | -------------- | ------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------ | ---------------------------------- |
-| **Alice**      | Public  | `Public/6aa4c365699b89d963ef85a59868b9612b6001f90750b4970662a62776332e81` | `7f273098f25b71e6c005a9519f2678da8d1c7f01f6a27778e2d9948abdf901fb` | 10,000,000,000,000 units | Primary Genesis Funder & Dispenser |
-| **Bob**        | Public  | `Public/891ae258f92ca8447af6cf09c41d96b3a06187d098b91ab2cc17b42e3c4a2fa1` | `f434f8741720014586ae43356d2aec6257da086222f604ddb75d69733b86fc4c` | 20,000,000,000,000 units | Secondary Counterparty             |
+| **Alice**      | Public  | `Public/7VDm7YRPvimbZgCzuFqCGf6RwPsTV3XY5W9DzT71oain`                     | `10a26a9aec7d34b82364eeae45c5294dbb0a764b000b94eeb9b58511dc487c4d` | 10,000,000,000,000 units | Primary Genesis Funder & Dispenser |
+| **Bob**        | Public  | `Public/6AtC7ekAeMXh9QgiBoUnsb69SVEnCy9DMhCy4nmJDbkh`                     | `717940b1cc55e5d6b2066dbf1d9a3f26f212f4db08d02388177fcfedd8a9be1b` | 20,000,000,000,000 units | Secondary Counterparty             |
 | **Shielded 1** | Private | `44KVvzvh2ephQU9aR5snboGUXKgS1FnPYh1W4KZKwmhm`                            | _(Derived from private seed)_                                      | 10,000,000,000,000 units | Shielded Circuit Pool Account 1    |
 | **Shielded 2** | Private | `478hD6LXFTYu5gRRkWkCyXPRsWgCwAfRredoCUfxr5b9`                            | _(Derived from private seed)_                                      | 20,000,000,000,000 units | Shielded Circuit Pool Account 2    |
 
@@ -103,7 +103,7 @@ just dev-fund <RECIPIENT_ADDRESS_OR_LEZ_NAME> [AMOUNT]
 Example:
 
 ```bash
-just dev-fund Public/891ae258f92ca8447af6cf09c41d96b3a06187d098b91ab2cc17b42e3c4a2fa1 5000000
+just dev-fund Public/6AtC7ekAeMXh9QgiBoUnsb69SVEnCy9DMhCy4nmJDbkh 5000000
 ```
 
 > [!TIP]
@@ -111,7 +111,7 @@ just dev-fund Public/891ae258f92ca8447af6cf09c41d96b3a06187d098b91ab2cc17b42e3c4
 >
 > ```bash
 > cargo run --bin evice-wallet -- transfer public \
->     --from Public/6aa4c365699b89d963ef85a59868b9612b6001f90750b4970662a62776332e81 \
+>     --from Public/7VDm7YRPvimbZgCzuFqCGf6RwPsTV3XY5W9DzT71oain \
 >     --to <RECIPIENT_ADDRESS> \
 >     --amount 5000000
 > ```
@@ -138,7 +138,7 @@ just dev-clean
 
 The standalone sequencer runs inside a Debian Bookworm environment with custom compilation requirements:
 
-1. **Smartcard & OpenSSL Dependencies:** The LEZ monorepo compiles `pcsc-sys` as part of its hardware wallet dependencies. The build stage includes `libpcsclite-dev`, and the runtime includes `libpcsclite1`.
+1. **Build & Runtime Dependencies:** The builder stage installs `pkg-config`, `libssl-dev`, `clang`, `cmake`, and `ninja-build` for compiling RocksDB and OpenSSL.
 2. **Fast Mock Proving (`RISC0_DEV_MODE=1`):** In standalone mode, zkVM execution avoids computationally heavy STARK proof generation while validating execution soundness.
 3. **zkVM Runtime Executor (`r0vm`):** The image includes the official RISC Zero `r0vm` binary installed at `/usr/local/bin/r0vm`, configured via `RISC0_SERVER_PATH=/usr/local/bin/r0vm`. This ensures guest zkVM programs execute without spawning errors during genesis transaction execution.
 

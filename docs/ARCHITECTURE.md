@@ -116,7 +116,7 @@ e-wallet-sdk/
 ┌────────────────────────────────────────────────────────────────────────┐
 │                     UNDERLYING LEZ PLATFORM                            │
 │                                                                        │
-│   `logos-execution-zone` (`dev` branch)                                │
+│   `logos-execution-zone` (`v0.4.0`, rev `a255b42c0fc80d1cb219454a...`) │
 │   • `lez/wallet` (Key management, Argon2 storage, state persistence)   │
 │   • `lee` (State machine, account model, cryptographic types)          │
 │   • LEZ Sequencer RPC Service                                          │
@@ -430,7 +430,7 @@ To facilitate rapid, reliable local development and continuous integration witho
    - Operates under `RISC0_DEV_MODE=1`, enabling transaction validation, state commitments, and mock proving to execute in milliseconds without zkVM STARK proving latency.
 2. **Clean Separation of Concerns:**
    - **Repository Root:** Centralizes operational orchestration manifests:
-     - `Dockerfile`: Multi-stage build compiling `sequencer_service` from the pinned upstream LEZ `dev` branch.
+     - `Dockerfile`: Multi-stage build compiling `sequencer_service` from the pinned upstream LEZ `v0.4.0` release tag.
      - `docker-compose.yml`: Root service configuration exposing JSON-RPC on port `3040:3040` and managing volume mounts.
      - `Justfile`: Task runner standardizing dev-env commands (`just dev-start`, `dev-stop`, `dev-health`, `dev-fund`).
    - **`dev-env/` Directory:** Strictly stores declarative configuration templates and fixtures:
@@ -438,8 +438,8 @@ To facilitate rapid, reliable local development and continuous integration witho
      - `sequencer_config.json`: Genesis block actions, channel parameters, and gossip listener bindings.
      - `wallet_config.json`: Client-side SDK and CLI connection configuration pointing to `http://127.0.0.1:3040`.
 3. **Pre-Funded Genesis Accounts:**
-   - **Alice (Dispenser):** `Public/6aa4c365699b89d963ef85a59868b9612b6001f90750b4970662a62776332e81` (10,000,000,000,000 units), private key `7f273098f25b71e6c005a9519f2678da8d1c7f01f6a27778e2d9948abdf901fb`.
-   - **Bob (Counterparty):** `Public/891ae258f92ca8447af6cf09c41d96b3a06187d098b91ab2cc17b42e3c4a2fa1` (20,000,000,000,000 units), private key `f434f8741720014586ae43356d2aec6257da086222f604ddb75d69733b86fc4c`.
+   - **Alice (Dispenser):** `Public/7VDm7YRPvimbZgCzuFqCGf6RwPsTV3XY5W9DzT71oain` (10,000,000,000,000 units), initial key `00f00d1e62fa5278307fbde46d84a022f571caff20c157b2831884cc3cc2ae4c29`, secret key `10a26a9aec7d34b82364eeae45c5294dbb0a764b000b94eeb9b58511dc487c4d`.
+   - **Bob (Counterparty):** `Public/6AtC7ekAeMXh9QgiBoUnsb69SVEnCy9DMhCy4nmJDbkh` (20,000,000,000,000 units), initial key `000223ea30d102c2f066dca058325ee30af21c23cf4dd9a16c3e4ab190ba0b49cb`, secret key `717940b1cc55e5d6b2066dbf1d9a3f26f212f4db08d02388177fcfedd8a9be1b`.
    - **Shielded Accounts:** Pre-seeded circuit pools `44KVvzvh2ephQU9aR5snboGUXKgS1FnPYh1W4KZKwmhm` and `478hD6LXFTYu5gRRkWkCyXPRsWgCwAfRredoCUfxr5b9`.
 4. **Declarative Task Automation (`Justfile`):**
    - `just dev-start`: Boots the standalone sequencer in the background via Docker Compose.
@@ -480,7 +480,7 @@ To ensure clean interoperation between SDK engine traits and LEZ v0.4 sequencer 
    - Wraps `sequencer_service_rpc::SequencerClient` and implements `wallet::WalletSequencerClient`, preserving detailed JSON-RPC error codes and data via `format_client_error`.
    - `WalletCore` is generic over `C: WalletSequencerClient`, allowing `SdkEngine` to inject this client via `WalletCore::new_update_chain_with_client` and `WalletCore::new_init_storage_with_client`.
 2. **Pure Upstream Commit Pinning:**
-   - All external LEZ dependencies in `Cargo.toml` are pinned to LEZ (`rev = "cb075d5777cb812ba44216429d4f2837ea8518bd"`) with zero local directory patches or workspace overrides.
+   - All external LEZ dependencies in `Cargo.toml` are pinned to LEZ `v0.4.0` (`rev = "a255b42c0fc80d1cb219454a3a1f5ec3b5d92115"`) with zero local directory patches or workspace overrides.
 
 ### 4.15 Protocol State Separation & Invariant Guardrails
 
@@ -488,11 +488,11 @@ To ensure safe operation across different LEZ network iterations and protect use
 
 1. **Cryptographic Identity Asymmetry:**
    - Public accounts are derived from ECDSA/Schnorr public keys and authenticate via cryptographic signatures.
-   - Private accounts are derived from post-quantum ML-KEM-768 viewing keys and BabyJubjub/Poseidon nullifier keys, authenticated exclusively through Zero-Knowledge SNARK proofs.
+   - Private accounts are derived from post-quantum ML-KEM-768 viewing keys and BabyJubjub/Poseidon nullifier keys, authenticated exclusively through Zero-Knowledge proofs.
    - Private accounts possess no ECDSA signing keys, rendering any transparent balance on their public shard permanently unspendable and unshieldable (_Asymmetric Deposit Trap_).
 2. **Shielding & 4-Way Private Proof Execution:**
-   - Public-to-private shielding (`Public ➝ Private`), private-to-private (`Private ➝ Private`), and unshielding (`Private ➝ Public`) execute as `PrivacyPreserving` ZK transactions (`send_priv_tx_native_transfer`).
-   - In `Public ➝ Private` transfers, the ZK circuit deducts the fee reserve (`~5,070,616` raw units at default `gas_limit = 34,000`) from the recipient's newly minted private note output, allowing even a brand-new Private account with `0` initial balance to receive tokens as long as the transfer amount exceeds the fee reserve (`> 5,070,616` raw units).
+   - Native transfers across all four routes (`Public ➝ Public`, `Public ➝ Private`, `Private ➝ Private`, and `Private ➝ Public`) execute through `wallet::program_facades::native_token_transfer::NativeTokenTransfer`.
+   - Privacy-preserving routes price storage at `fee_core::market::PROOF_BYTES` (`223,047` bytes) plus `PRIVATE_VERIFY_GAS` (`409,764`). When shielding into a fresh 0-balance private account, the transferred amount and fee reserve constraints must hold (with surplus over actual fee refunded to `refund_to` or the payer's public alias).
    - `propose_native_transfer` honors explicit `Public/` and `Private/` prefixes via `from_privacy: Option<AccountPrivacy>` and validates destination prefixes so `Public ➝ Private` is never misrouted into a transparent transfer.
 3. **Downstream Safety Guardrails:**
    - The SDK Engine and consumer modules implement pre-flight validation guards to prevent users from executing invalid self-shielding or unspendable transparent deposits to private accounts.
@@ -505,9 +505,9 @@ Because Logos Basecamp executes `ui_qml` plugins inside a strict zero-network sa
    - **Embedded Native Rust PoW Engine (Default Standalone Mode):** Executes a multi-threaded SHA-256 Proof-of-Work hashing loop locally inside `sdk-engine` (`logos/empower/pow/v1/`), crediting `10,000,000` raw units (`MINED_BLOCK_REWARD_UNITS`) per solved ticket into `SdkPersistentState::unbridged_l1_balance` (persisted atomically to `sdk_state.json`).
    - **Optional External L1 Node Sync (`LOGOS_L1_NODE_URL`, default `http://127.0.0.1:8080`):** When a local `logos-blockchain-node` (L1 Bedrock node) is running on the workstation, `PowBridgeManager` automatically dispatches authentic L1 REST calls (`PUT /pow/mining/start`, `PUT /pow/auto-claim/start`, `PUT /pow/mining/stop`, `GET /pow/status`, `GET /pow/rewards/claimable`, `POST /pow/claim`, and `POST /channel/deposit`).
 2. **L1 ➝ LEZ Channel Deposit & On-Chain Settlement (`execute_channel_deposit`):**
-   - Encodes canonical Borsh `DepositMetadata` (`DepositRecipient::Identified(PublicAccountEvidence::Key(pubkey))`, 34 bytes) matching `logos-execution-zone/crates/bridge-core`.
+   - Encodes canonical Borsh `DepositMetadata` (`DepositRecipient::Identified(PublicAccountEvidence::Key(initial_key))`, 35 bytes) matching `bridge_core` v0.4.0.
    - Enforces the **Asymmetric Deposit Trap Guardrail**: rejects any attempt to bridge transparent L1 tokens directly into a `Private` account.
-   - Dispatches an on-chain LEZ settlement transaction (`V03ShardModel` and `V04ActorModel` compatible) to the active LEZ sequencer (`https://testnet.lez.logos.co` or `http://127.0.0.1:3040`), waits for block confirmation via `wallet.poller().poll_tx`, and deducts the bridged balance from `unbridged_l1_balance`.
+   - Builds and signs a `LeeTransaction::Public` settlement transaction (`PublicAccountSecret`, `Authority`, `WitnessSet::sign`) with exact dual-market (`exec` + `stor` `charged_bytes()`) `max_fee`, dispatches it to the active LEZ sequencer (`https://testnet.lez.logos.co` or `http://127.0.0.1:3040`), waits for block confirmation via `wallet.poller().poll_tx`, and deducts the bridged balance from `unbridged_l1_balance`.
 
 ### 4.17 Zero-Knowledge Prover Worker Daemon (`prover_daemon`, `e-prover-daemon`)
 
@@ -526,12 +526,12 @@ To guarantee smooth, non-blocking desktop UX on resource-constrained hardware (e
 
 ### 4.18 On-Chain Sequencer Transaction Status Reconciliation (`get_transaction_status`)
 
-To ensure desktop user interfaces and automated reconcilers receive accurate, non-blocking transaction inclusion status without relying on protobuf payload deserialization (which can fail due to version evolutions between v0.3 shard models and v0.4 actor models), `OwnerApi::get_transaction_status` implements a direct, protocol-adaptive sequencer query pipeline:
+To ensure desktop user interfaces and automated reconcilers receive accurate, non-blocking transaction inclusion status, `OwnerApi::get_transaction_status` implements a typed LEZ v0.4.0 query and nonce-drop reconciliation pipeline:
 
-1. **Direct JSON-RPC Inclusion Check:** Queries `getTransaction(tx_hash)` on the underlying sequencer JSON-RPC endpoint (`client.inner().request("getTransaction", rpc_params![hash])`). When the sequencer has included the transaction in a block, it returns the tuple `(Value, BlockId)`, allowing the SDK to immediately report `status: "confirmed"` with the canonical `block_id` without deserializing the transaction body.
-2. **Pending & Mempool Detection:** If `getTransaction` returns `None`, the transaction is recognized as still residing in the mempool or pending sequencer ordering (`status: "pending"`, `block_id: None`).
-3. **Fallback Graceful Recovery:** If the raw JSON-RPC query fails, the method attempts a fallback to `client.get_transaction(hash)`. If that also fails, an informative error is returned.
-4. **Desktop UI Integration:** This provides a unified, single source of truth for all transaction types requiring sequencer confirmation (L1 $\to$ LEZ Channel Bridges, Native Transfers, and Contract Calls), ensuring all transactions follow identical lifecycle states (`pending` $\to$ `confirmed` with height, or `failed`).
+1. **Direct Sequencer Inclusion Check:** Queries `client.get_transaction(hash)` on `TestnetSequencerClient`. When the sequencer has included the transaction in a block, it returns the canonical `block_id`, allowing the SDK to report `status: "confirmed"` with `block_id: Some(block_id)`.
+2. **Pending & Nonce-Drop Detection:** If `get_transaction` returns `None`, the SDK compares the tracked `submitted_tx_nonces` entry against `get_accounts_nonces`. If the sender's on-chain nonce has advanced past the submitted nonce, it reports `status: "dropped"`; otherwise `status: "pending"` with `block_id: None`.
+3. **Error Propagation:** If the typed RPC query fails, the underlying `SdkError` is returned for caller diagnostics.
+4. **Desktop UI Integration:** This provides a unified, single source of truth for all transaction types requiring sequencer confirmation (L1 $\to$ LEZ Channel Bridges, Native Transfers, and Contract Calls), ensuring consistent lifecycle tracking.
 
 ## 5. Security & Privacy Model
 
@@ -544,7 +544,7 @@ To ensure desktop user interfaces and automated reconcilers receive accurate, no
 | **Unapproved Private Balance Snooping**                | Private/shielded accounts require explicit `GrantKind::Read` authorization per account.                                                                                           | `session.rs`                                                               |
 | **State Corruption on Power Failure**                  | Two-phase atomic write-then-rename with directory fsync and `.bak` snapshot fallback.                                                                                             | `store.rs`                                                                 |
 | **Compromised Development Auto-Approval**              | `PolicyApprovalHandler` is strictly feature-gated; CI workflow runs dedicated symbols check to ensure absence from release builds.                                                | `approval.rs`, `ci-linux.yml`                                              |
-| **Upstream Platform Breaking Changes**                 | Direct Git workspace dependencies tracking `logos-execution-zone` `dev` branch with Argon2 storage encryption adapter.                                                            | `Cargo.toml`, `store.rs`                                                   |
+| **Upstream Platform Breaking Changes**                 | Direct Git workspace dependencies tracking `logos-execution-zone` `v0.4.0` release tag with Argon2 storage encryption adapter.                                                            | `Cargo.toml`, `store.rs`                                                   |
 | **Terminal Shoulder Surfing / Password Echo**          | Terminal echo disabled via `rpassword::prompt_password`; characters never written to stdout or scrollback buffer.                                                                 | `cli/src/main.rs`                                                          |
 | **Typo-Induced Wallet Lockout**                        | Mandatory two-step password confirmation prompt before initial storage derivation.                                                                                                | `cli/src/main.rs`                                                          |
 | **Accidental Storage Overwrite**                       | Guard checks pre-existing files; requires explicit `--force` flag before re-initializing existing directories.                                                                    | `cli/src/main.rs`                                                          |
@@ -578,7 +578,7 @@ Following the project's phased delivery approach, the architecture document refl
 - [x] Clean-room Logos Name Service (LNS) `.lez` resolver with Argon2id derivation, live sequencer PDA query, AES-256-GCM profile decryption, and caching.
 - [x] Identity Accountability cryptographic primitives (HKDF derivation, scoped nullifiers, Two-Tier Shamir Secret Sharing over GF($2^8$), BIP-340 Schnorr attestations, and secp256k1 ECDH).
 - [x] Crash-safe atomic store with write-then-rename and `.bak` recovery.
-- [x] Automated CI pipelines for Linux and macOS tracking upstream LEZ `dev`.
+- [x] Automated CI pipelines for Linux and macOS tracking upstream LEZ `v0.4.0`.
 - [x] **Full C-ABI FFI Layer (`sdk-ffi`):** Complete `extern "C"` surface with opaque pointer handles (`FfiSdkEngine`), panic-safe JSON serialization (`{"ok": true, ...}` / `{"ok": false, "error": "..."}`), non-blocking approval callback bridge supporting synchronous decisions & asynchronous deferred approvals, memory lifecycle (`e_wallet_free_string`), and auto-generated C header (`include/e_wallet_sdk.h`).
 - [x] **Comprehensive CLI Subcommands (`cli`):** Full dispatch wiring for wallet lifecycle (`create`, `open`, `restore`), account management (`create-public`, `create-private`, `list`, `balance`), transfers across 4 directions with transparent `.lez` LNS name resolution and interactive terminal approval modal, and token operations (`create-definition`, `initialize-holding`, `transfer`, `mint`, `burn`, `balance`).
 - [x] **Standalone Development Environment (`dev-env/`, Docker, Justfile):** Containerized and native standalone LEZ sequencer with mocked Bedrock L1, pre-funded Alice & Bob genesis accounts, fast `RISC0_DEV_MODE=1` execution, zero external network dependency, and declarative `Justfile` tasks (`dev-start`, `dev-stop`, `dev-health`, `dev-fund`, `dev-clean`).

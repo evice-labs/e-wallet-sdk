@@ -1,5 +1,6 @@
 use crate::*;
 
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn e_wallet_get_gas_limit(engine: *mut FfiSdkEngine) -> u64 {
     catch_ffi(sdk_engine::api::DEFAULT_WALLET_GAS_LIMIT, || {
         if engine.is_null() {

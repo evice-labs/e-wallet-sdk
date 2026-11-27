@@ -232,16 +232,9 @@ pub unsafe extern "C" fn e_wallet_propose_native_transfer(
         };
 
         let sid = SessionId(sess_str.to_string());
-        let clean_from = from_str
-            .trim()
-            .strip_prefix("Public/")
-            .or_else(|| from_str.trim().strip_prefix("public/"))
-            .or_else(|| from_str.trim().strip_prefix("Private/"))
-            .or_else(|| from_str.trim().strip_prefix("private/"))
-            .unwrap_or(from_str.trim());
-        let from = match AccountId::from_str(clean_from) {
+        let from = match parse_account_id_str(from_str) {
             Ok(a) => a,
-            Err(e) => return error_json(&format!("Invalid from account ID: {:?}", e)),
+            Err(e) => return error_json(&format!("Invalid from account ID: {}", e)),
         };
         let amount = match amt_str.parse::<u128>() {
             Ok(a) => a,
@@ -463,21 +456,13 @@ pub unsafe extern "C" fn e_wallet_propose_contract_call(
         };
 
         let sid = SessionId(sess_str.to_string());
-        let clean_prog = prog_str
-            .trim()
-            .trim_start_matches("Public/")
-            .trim_start_matches("Private/");
-        let program = match AccountId::from_str(clean_prog) {
+        let program = match parse_account_id_str(prog_str) {
             Ok(a) => a,
-            Err(e) => return error_json(&format!("Invalid program_id: {:?}", e)),
+            Err(e) => return error_json(&format!("Invalid program_id: {}", e)),
         };
-        let clean_payer = payer_str
-            .trim()
-            .trim_start_matches("Public/")
-            .trim_start_matches("Private/");
-        let payer = match AccountId::from_str(clean_payer) {
+        let payer = match parse_account_id_str(payer_str) {
             Ok(a) => a,
-            Err(e) => return error_json(&format!("Invalid payer_id: {:?}", e)),
+            Err(e) => return error_json(&format!("Invalid payer_id: {}", e)),
         };
 
         let raw_mentions: Vec<String> = match serde_json::from_str(mentions_str) {
@@ -486,13 +471,9 @@ pub unsafe extern "C" fn e_wallet_propose_contract_call(
         };
         let mut mentions = Vec::with_capacity(raw_mentions.len());
         for m in raw_mentions {
-            let clean_m = m
-                .trim()
-                .trim_start_matches("Public/")
-                .trim_start_matches("Private/");
-            match AccountId::from_str(clean_m) {
+            match parse_account_id_str(&m) {
                 Ok(a) => mentions.push(a),
-                Err(e) => return error_json(&format!("Invalid mention account: {:?}", e)),
+                Err(e) => return error_json(&format!("Invalid mention account: {}", e)),
             }
         }
 

@@ -30,11 +30,7 @@ use std::time::Duration;
 )]
 struct Cli {
     /// Data directory for wallet state and config (defaults to ~/.evice-wallet)
-    #[arg(
-        long,
-        env = "EVICE_WALLET_HOME_DIR",
-        default_value = "~/.device-wallet"
-    )]
+    #[arg(long, env = "EVICE_WALLET_HOME_DIR", default_value = "~/.evice-wallet")]
     data_dir: PathBuf,
 
     /// Wallet storage password (can also be passed via EVICE_WALLET_PASSWORD or LEZ_WALLET_PASSWORD env var).
@@ -278,10 +274,9 @@ fn ensure_wallet_exists(data_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Retrieves the wallet password with terminal echo disabled.
-fn get_password(cli_pw: &Option<String>, prompt_text: &str) -> Result<String> {
+fn password_from_args_or_env(cli_pw: &Option<String>) -> Option<String> {
     if let Some(p) = cli_pw.as_ref() {
-        return Ok(p.clone());
+        return Some(p.clone());
     }
     for var in &[
         "e_wallet_PASSWORD",
@@ -292,8 +287,16 @@ fn get_password(cli_pw: &Option<String>, prompt_text: &str) -> Result<String> {
         if let Ok(p) = std::env::var(var)
             && !p.is_empty()
         {
-            return Ok(p);
+            return Some(p);
         }
+    }
+    None
+}
+
+/// Retrieves the wallet password with terminal echo disabled.
+fn get_password(cli_pw: &Option<String>, prompt_text: &str) -> Result<String> {
+    if let Some(p) = password_from_args_or_env(cli_pw) {
+        return Ok(p);
     }
     let prompt = format!("{}: ", prompt_text);
     let pass = rpassword::prompt_password(prompt)
@@ -303,20 +306,8 @@ fn get_password(cli_pw: &Option<String>, prompt_text: &str) -> Result<String> {
 
 /// For wallet creation, prompts for password twice and verifies they match.
 fn get_new_wallet_password(cli_pw: &Option<String>) -> Result<String> {
-    if let Some(p) = cli_pw.as_ref() {
-        return Ok(p.clone());
-    }
-    for var in &[
-        "e_wallet_PASSWORD",
-        "E_WALLET_PASSWORD",
-        "EVICE_WALLET_PASSWORD",
-        "LEZ_WALLET_PASSWORD",
-    ] {
-        if let Ok(p) = std::env::var(var)
-            && !p.is_empty()
-        {
-            return Ok(p);
-        }
+    if let Some(p) = password_from_args_or_env(cli_pw) {
+        return Ok(p);
     }
     let p1 = rpassword::prompt_password("Enter password for new wallet: ")
         .context("Failed to read password from terminal")?;
@@ -390,7 +381,7 @@ pub async fn main() -> Result<()> {
             println!("║ API Version:    {:<40} ║", sdk_engine::API_VERSION);
             println!(
                 "║ Network:        {:<40} ║",
-                "Logos Execution Zone (testnet 0.3 - 0.4)"
+                "Logos Execution Zone (testnet 0.4)"
             );
             println!("║ Data Dir:       {:<40} ║", data_dir.display());
             let config = SdkConfig::new(data_dir.clone());

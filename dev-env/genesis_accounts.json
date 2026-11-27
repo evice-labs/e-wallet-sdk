@@ -6,17 +6,17 @@
     "public": [
       {
         "alias": "alice (Primary Genesis Funder)",
-        "account_id": "Public/6aa4c365699b89d963ef85a59868b9612b6001f90750b4970662a62776332e81",
-        "public_key_hex": "6aa4c365699b89d963ef85a59868b9612b6001f90750b4970662a62776332e81",
-        "private_key_hex": "7f273098f25b71e6c005a9519f2678da8d1c7f01f6a27778e2d9948abdf901fb",
+        "account_id": "Public/7VDm7YRPvimbZgCzuFqCGf6RwPsTV3XY5W9DzT71oain",
+        "initial_key_hex": "00f00d1e62fa5278307fbde46d84a022f571caff20c157b2831884cc3cc2ae4c29",
+        "secret_hex": "10a26a9aec7d34b82364eeae45c5294dbb0a764b000b94eeb9b58511dc487c4d",
         "initial_balance_units": "10000000000000",
         "role": "Genesis Funder & Test Dispenser"
       },
       {
         "alias": "bob (Secondary Genesis Account)",
-        "account_id": "Public/891ae258f92ca8447af6cf09c41d96b3a06187d098b91ab2cc17b42e3c4a2fa1",
-        "public_key_hex": "891ae258f92ca8447af6cf09c41d96b3a06187d098b91ab2cc17b42e3c4a2fa1",
-        "private_key_hex": "f434f8741720014586ae43356d2aec6257da086222f604ddb75d69733b86fc4c",
+        "account_id": "Public/6AtC7ekAeMXh9QgiBoUnsb69SVEnCy9DMhCy4nmJDbkh",
+        "initial_key_hex": "000223ea30d102c2f066dca058325ee30af21c23cf4dd9a16c3e4ab190ba0b49cb",
+        "secret_hex": "717940b1cc55e5d6b2066dbf1d9a3f26f212f4db08d02388177fcfedd8a9be1b",
         "initial_balance_units": "20000000000000",
         "role": "Secondary Counterparty"
       }

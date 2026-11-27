@@ -77,14 +77,42 @@ fn extract_account_id(acc: AccountIdWithPrivacy) -> AccountId {
     }
 }
 
+fn genesis_alice() -> testnet_initial_state::PublicAccountPrivateInitialData {
+    testnet_initial_state::initial_pub_accounts_private_keys()
+        .into_iter()
+        .next()
+        .expect("testnet_initial_state must define initial public account A")
+}
+
 pub fn alice_account_id() -> AccountId {
-    let mut bytes = [0u8; 32];
-    hex::decode_to_slice(
-        "6aa4c365699b89d963ef85a59868b9612b6001f90750b4970662a62776332e81",
-        &mut bytes,
-    )
-    .expect("valid hex");
-    AccountId::new(bytes)
+    genesis_alice().account_id
+}
+
+fn resolve_payer_id(
+    wallet_core: &WalletCore<SequencerClient>,
+    payer: Option<String>,
+) -> Result<AccountId> {
+    if let Some(p) = payer {
+        let mention = CliAccountMention::from_str(&p)
+            .map_err(|e| anyhow::anyhow!("Invalid payer mention: {e}"))?;
+        return Ok(extract_account_id(mention.resolve(wallet_core.storage())?));
+    }
+    let alice_id = alice_account_id();
+    if wallet_core
+        .storage()
+        .key_chain()
+        .pub_account_secret(alice_id)
+        .is_some()
+    {
+        return Ok(alice_id);
+    }
+    let (first, _) = wallet_core
+        .storage()
+        .key_chain()
+        .public_account_ids()
+        .next()
+        .context("No public accounts available in wallet keystore")?;
+    Ok(first)
 }
 
 fn get_default_submission_id() -> Result<[u8; 32]> {
@@ -119,36 +147,23 @@ pub fn get_wallet_core(network: &str) -> Result<WalletCore<SequencerClient>> {
         let mut wallet_core = if storage_path.exists() {
             WalletCore::new_update_chain(config_path, storage_path, None, "")?
         } else {
-            let (mut wallet, _mnemonic) =
+            let (wallet, _mnemonic) =
                 WalletCore::new_init_storage(config_path, storage_path, None, "")?;
-            const ALICE_KEY_HEX: &str =
-                "7f273098f25b71e6c005a9519f2678da8d1c7f01f6a27778e2d9948abdf901fb";
-            let alice_key = lee::PrivateKey::from_str(ALICE_KEY_HEX)
-                .map_err(|e| anyhow::anyhow!("Failed to parse Alice private key: {e}"))?;
-            wallet
-                .storage_mut()
-                .key_chain_mut()
-                .add_imported_public_account(alice_key);
-            wallet.store_persistent_data()?;
             wallet
         };
 
-        const ALICE_KEY_HEX: &str =
-            "7f273098f25b71e6c005a9519f2678da8d1c7f01f6a27778e2d9948abdf901fb";
-        let alice_id = alice_account_id();
+        let alice = genesis_alice();
         if wallet_core
             .storage()
             .key_chain()
-            .pub_account_signing_key(alice_id)
+            .pub_account_secret(alice.account_id)
             .is_none()
         {
-            let alice_key = lee::PrivateKey::from_str(ALICE_KEY_HEX)
-                .map_err(|e| anyhow::anyhow!("Failed to parse Alice private key: {e}"))?;
             wallet_core
                 .storage_mut()
                 .key_chain_mut()
-                .add_imported_public_account(alice_key);
-            let _ = wallet_core.store_persistent_data();
+                .add_imported_public_account(alice.secret);
+            wallet_core.store_persistent_data()?;
         }
         Ok(wallet_core)
     } else {
@@ -280,31 +295,7 @@ async fn main() -> Result<()> {
                 bytecode
             };
 
-            let payer_id = if let Some(p) = payer {
-                let mention = CliAccountMention::from_str(&p)
-                    .map_err(|e| anyhow::anyhow!("Invalid payer mention: {e}"))?;
-                extract_account_id(mention.resolve(wallet_core.storage())?)
-            } else {
-                let alice_id = alice_account_id();
-                if wallet_core
-                    .storage()
-                    .key_chain()
-                    .pub_account_signing_key(alice_id)
-                    .is_some()
-                {
-                    alice_id
-                } else {
-                    let (first, _) = wallet_core
-                        .storage()
-                        .key_chain()
-                        .public_account_ids()
-                        .next()
-                        .context(
-                            "No public accounts available in wallet keystore to pay deployment fee",
-                        )?;
-                    first
-                }
-            };
+            let payer_id = resolve_payer_id(&wallet_core, payer)?;
 
             let binary = risc0_binfmt::ProgramBinary::decode(&program_bytes)
                 .context("Failed to decode program binary as RISC0 ProgramBinary")?;
@@ -381,29 +372,7 @@ async fn main() -> Result<()> {
                 .map_err(|e| anyhow::anyhow!("Invalid program header: {e}"))?;
             let program_id = extract_account_id(program_mention.resolve(wallet_core.storage())?);
 
-            let payer_id = if let Some(p) = payer {
-                let mention = CliAccountMention::from_str(&p)
-                    .map_err(|e| anyhow::anyhow!("Invalid payer mention: {e}"))?;
-                extract_account_id(mention.resolve(wallet_core.storage())?)
-            } else {
-                let alice_id = alice_account_id();
-                if wallet_core
-                    .storage()
-                    .key_chain()
-                    .pub_account_signing_key(alice_id)
-                    .is_some()
-                {
-                    alice_id
-                } else {
-                    let (first, _) = wallet_core
-                        .storage()
-                        .key_chain()
-                        .public_account_ids()
-                        .next()
-                        .context("No public accounts available in wallet keystore")?;
-                    first
-                }
-            };
+            let payer_id = resolve_payer_id(&wallet_core, payer)?;
 
             let pda_seed_bytes = derive_testimonial_pda_seed(payer_id.value(), &sub_id_bytes);
             let pda_id = AccountId::for_public_pda(
@@ -505,8 +474,13 @@ async fn main() -> Result<()> {
                     CliAccountMention::from_str(clean).map_err(|e| anyhow::anyhow!("{e}"))?;
                 let resolved = mention.resolve(wallet_core.storage())?;
                 let id = extract_account_id(resolved);
-                let should_sign = force_sign
-                    .unwrap_or_else(|| wallet_core.get_account_public_signing_key(id).is_some());
+                let should_sign = force_sign.unwrap_or_else(|| {
+                    wallet_core
+                        .storage()
+                        .key_chain()
+                        .pub_account_secret(id)
+                        .is_some()
+                });
                 let identity = if should_sign {
                     wallet::AccountIdentity::Public(id)
                 } else {

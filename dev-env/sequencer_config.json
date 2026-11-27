@@ -13,15 +13,15 @@
       "minimum_sequencer_stake": 149,
       "posting_timeframe": 300,
       "posting_timeout": 25,
-      "exit_delay": 100,
-      "max_block_size": 1048576
+      "max_block_size": 1048576,
+      "finality_depth": 35
     },
     "actions": [
       {
         "supply_account": {
           "recipient": {
             "identified": {
-              "key": "6aa4c365699b89d963ef85a59868b9612b6001f90750b4970662a62776332e81"
+              "key": "00f00d1e62fa5278307fbde46d84a022f571caff20c157b2831884cc3cc2ae4c29"
             }
           },
           "balance": 10000000000000
@@ -31,7 +31,7 @@
         "supply_account": {
           "recipient": {
             "identified": {
-              "key": "891ae258f92ca8447af6cf09c41d96b3a06187d098b91ab2cc17b42e3c4a2fa1"
+              "key": "000223ea30d102c2f066dca058325ee30af21c23cf4dd9a16c3e4ab190ba0b49cb"
             }
           },
           "balance": 20000000000000

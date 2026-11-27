@@ -74,13 +74,13 @@ dev-clean:
 dev-fund recipient amount="10000000":
     @echo "💧 Disbursing {{amount}} units from Genesis Alice to {{recipient}}..."
     @just dev-health >/dev/null
-    @echo "🟢 Sequencer active. Alice Genesis Key: 7f273098f25b71e6c005a9519f2678da8d1c7f01f6a27778e2d9948abdf901fb"
+    @echo "🟢 Sequencer active. Alice Genesis Secret: 10a26a9aec7d34b82364eeae45c5294dbb0a764b000b94eeb9b58511dc487c4d"
     @echo "   Recipient {{recipient}} ready for funding transactions."
 
 # Native Cargo fallback (for environments without Docker daemon)
 dev-native-start:
     @echo "⚡ Starting sequencer via native Cargo..."
-    RISC0_DEV_MODE=1 cargo run --git https://github.com/logos-blockchain/logos-execution-zone.git --branch dev --features standalone -p sequencer_service -- start dev-env/.sequencer_home --rpc-listen-address 127.0.0.1:3040
+    RISC0_DEV_MODE=1 cargo run --git https://github.com/logos-blockchain/logos-execution-zone.git --tag v0.4.0 --features standalone -p sequencer_service -- start dev-env/.sequencer_home --rpc-listen-address 127.0.0.1:3040
 
 # ON-CHAIN SMART CONTRACT & DISPATCHER COMMANDS
 #
