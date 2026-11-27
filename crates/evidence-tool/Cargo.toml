@@ -10,10 +10,6 @@ name = "evidence-tool"
 path = "src/main.rs"
 
 [dependencies]
-wallet.workspace = true
-lee.workspace = true
-lee_core.workspace = true
-common.workspace = true
 testimonial-program.workspace = true
 
 clap.workspace = true

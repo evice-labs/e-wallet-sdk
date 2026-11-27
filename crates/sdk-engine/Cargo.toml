@@ -11,9 +11,9 @@ wallet.workspace = true
 lee.workspace = true
 lee_core.workspace = true
 common.workspace = true
-key_protocol.workspace = true
 sequencer_service_rpc.workspace = true
 testnet_initial_state.workspace = true
+bridge_core = { workspace = true, features = ["host"] }
 
 # Third-party
 argon2.workspace = true
@@ -25,11 +25,8 @@ bip39.workspace = true
 borsh.workspace = true
 chrono.workspace = true
 dashmap.workspace = true
-derive_more.workspace = true
-futures.workspace = true
 hex.workspace = true
 log.workspace = true
-jsonrpsee.workspace = true
 rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -52,5 +49,6 @@ default = []
 dev-auto-approve = []
 
 [dev-dependencies]
+jsonrpsee.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tempfile = "3"

@@ -16,6 +16,7 @@ common.workspace = true
 wallet.workspace = true
 sequencer_service_rpc.workspace = true
 program_loader_core.workspace = true
+testnet_initial_state.workspace = true
 testimonial-program.workspace = true
 
 clap.workspace = true

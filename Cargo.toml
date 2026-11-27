@@ -18,19 +18,14 @@ repository = "https://github.com/evice-labs/e-wallet-sdk"
 
 [workspace.dependencies]
 # LEZ monorepo crates
-wallet                = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "cb075d5777cb812ba44216429d4f2837ea8518bd", package = "wallet" }
-lee                   = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "cb075d5777cb812ba44216429d4f2837ea8518bd", package = "lee" }
-lee_core              = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "cb075d5777cb812ba44216429d4f2837ea8518bd", package = "lee_core" }
-common                = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "cb075d5777cb812ba44216429d4f2837ea8518bd", package = "common" }
-key_protocol          = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "cb075d5777cb812ba44216429d4f2837ea8518bd", package = "key_protocol" }
-sequencer_service_rpc = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "cb075d5777cb812ba44216429d4f2837ea8518bd", package = "sequencer_service_rpc", features = ["client"] }
-testnet_initial_state = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "cb075d5777cb812ba44216429d4f2837ea8518bd", package = "testnet_initial_state" }
-bridge_core           = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "cb075d5777cb812ba44216429d4f2837ea8518bd", package = "bridge_core" }
-keycard_wallet        = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "cb075d5777cb812ba44216429d4f2837ea8518bd", package = "keycard_wallet" }
-programs              = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "cb075d5777cb812ba44216429d4f2837ea8518bd", package = "programs", default-features = false }
-system_accounts       = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "cb075d5777cb812ba44216429d4f2837ea8518bd", package = "system_accounts" }
-sequencer_stake_core  = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "cb075d5777cb812ba44216429d4f2837ea8518bd", package = "sequencer_stake_core" }
-program_loader_core   = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "cb075d5777cb812ba44216429d4f2837ea8518bd", package = "program_loader_core" }
+wallet                = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "a255b42c0fc80d1cb219454a3a1f5ec3b5d92115", package = "wallet" }
+lee                   = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "a255b42c0fc80d1cb219454a3a1f5ec3b5d92115", package = "lee" }
+lee_core              = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "a255b42c0fc80d1cb219454a3a1f5ec3b5d92115", package = "lee_core" }
+common                = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "a255b42c0fc80d1cb219454a3a1f5ec3b5d92115", package = "common" }
+sequencer_service_rpc = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "a255b42c0fc80d1cb219454a3a1f5ec3b5d92115", package = "sequencer_service_rpc", features = ["client"] }
+testnet_initial_state = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "a255b42c0fc80d1cb219454a3a1f5ec3b5d92115", package = "testnet_initial_state" }
+bridge_core           = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "a255b42c0fc80d1cb219454a3a1f5ec3b5d92115", package = "bridge_core" }
+program_loader_core   = { git = "https://github.com/logos-blockchain/logos-execution-zone.git", rev = "a255b42c0fc80d1cb219454a3a1f5ec3b5d92115", package = "program_loader_core" }
 
 # SDK internal crates
 sdk-engine          = { path = "crates/sdk-engine" }
@@ -46,9 +41,7 @@ borsh           = "1.5.7"
 chrono          = { version = "0.4", features = ["serde"] }
 clap            = { version = "4.5.42", features = ["derive", "env"] }
 dashmap         = "6"
-derive_more     = { version = "2", features = ["display"] }
 env_logger      = "0.11"
-futures         = "0.3"
 hex             = "0.4.3"
 itertools       = "0.14.0"
 jsonrpsee       = { version = "0.26.0", features = ["client"] }
