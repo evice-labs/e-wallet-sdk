@@ -14,11 +14,10 @@ FROM rust:1.98.1-bookworm AS builder
 
 WORKDIR /build
 
-# Install native compilation dependencies for RocksDB, OpenSSL, PCSC smartcards, and clang
+# Install native compilation dependencies for RocksDB, OpenSSL, and clang
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config \
     libssl-dev \
-    libpcsclite-dev \
     git \
     clang \
     cmake \
@@ -27,11 +26,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install r0vm binary from RISC Zero toolchain installer
 RUN curl -L https://risczero.com/install | bash && \
-    /root/.risc0/bin/rzup install r0vm 3.0.5 && \
+    /root/.risc0/bin/rzup install r0vm 3.1.0 && \
     cp /root/.risc0/bin/r0vm /usr/local/bin/r0vm
 
-# Clone LEZ monorepo from upstream repository at pinned dev branch
-RUN git clone --depth 1 --branch dev https://github.com/logos-blockchain/logos-execution-zone.git /build
+# Clone LEZ monorepo from upstream repository at pinned v0.4.0 release tag
+RUN git clone --depth 1 --branch v0.4.0 https://github.com/logos-blockchain/logos-execution-zone.git /build
 
 # Build sequencer_service binary with standalone mock Bedrock L1 and in-process prove support
 ENV RISC0_DEV_MODE=1
@@ -47,7 +46,6 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
-    libpcsclite1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy compiled sequencer_service and r0vm binaries from builder stage
