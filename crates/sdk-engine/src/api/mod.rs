@@ -8,16 +8,14 @@
 //! - **[`OwnerApi`]** callable only by the wallet UI (privileged).
 
 use bip39::Mnemonic;
-use jsonrpsee::core::client::ClientT;
-use jsonrpsee::rpc_params;
 use lee::AccountId;
-use lee_core::BlockId;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 use wallet::account::{AccountIdWithPrivacy, Label};
-use wallet::config::WalletConfig;
+use wallet::config::{WalletConfig, WalletConfigOverrides};
 use wallet::{WalletCore, WalletSequencerClient};
 
 use crate::approval::{ApprovalDecision, ApprovalHandler, ApprovalPrompt};
@@ -36,9 +34,9 @@ use crate::verifier::{BuiltinVerifier, ProgramVerifier};
 const DEFAULT_SESSION_TTL: Duration = Duration::from_secs(24 * 3600);
 const DEFAULT_APPROVAL_TIMEOUT: Duration = Duration::from_secs(300);
 
-/// Canonical default gas limit for standard transactions in EVICE WALLET SDK.
-/// Aligns with standard LEZ execution limits for native and token transfers.
-pub const DEFAULT_WALLET_GAS_LIMIT: u64 = 34_000;
+/// Canonical default execution gas limit aligned with LEZ v0.4.0 (`fee_core::market::MAX_GAS_EXEC`).
+/// Public transactions are dry-run measured by `WalletCore` and refunded for excess gas.
+pub const DEFAULT_WALLET_GAS_LIMIT: u64 = wallet::DEFAULT_GAS_LIMIT;
 
 #[derive(Debug, Clone)]
 pub struct SdkConfig {
@@ -405,6 +403,62 @@ pub(super) fn decode_token_actor_balance(data: &[u8]) -> u128 {
         return u64::from_le_bytes(data.try_into().unwrap()) as u128;
     }
     0
+}
+
+pub(crate) fn is_private_account_local(
+    kc: &wallet::storage::key_chain::UserKeyChain,
+    account_id: AccountId,
+) -> bool {
+    kc.private_account(account_id).is_some()
+        || kc.managed_private_account(account_id).is_some()
+        || kc.shared_private_account(account_id).is_some()
+}
+
+pub(super) fn build_wallet_client(
+    config_path: &std::path::Path,
+    overrides: &WalletConfigOverrides,
+) -> SdkResult<TestnetSequencerClient> {
+    let mut wallet_config =
+        WalletConfig::from_path_or_initialize_default(config_path).map_err(SdkError::Internal)?;
+    wallet_config.apply_overrides(overrides.clone());
+    let inner_client =
+        WalletCore::client_from_config(&wallet_config).map_err(SdkError::Internal)?;
+    Ok(TestnetSequencerClient::new(inner_client))
+}
+
+pub(super) async fn ensure_private_sync_tip(wallet: &mut WalletCore<TestnetSequencerClient>) {
+    if wallet.storage().last_synced_block() == 0 {
+        let any_initialized = wallet
+            .storage()
+            .key_chain()
+            .private_accounts()
+            .any(|found| *found.account != lee::Account::default());
+        if !any_initialized && wallet.start_at_chain_tip().await.is_ok() {
+            let _ = wallet.store_persistent_data();
+        }
+    }
+}
+
+pub(super) fn resolve_account_label(
+    wallet: &WalletCore<TestnetSequencerClient>,
+    custom_labels: &HashMap<String, String>,
+    account_id: AccountId,
+    privacy: &AccountPrivacy,
+) -> Option<String> {
+    custom_labels
+        .get(&account_id.to_string())
+        .cloned()
+        .or_else(|| {
+            let target_privacy = match privacy {
+                AccountPrivacy::Public => AccountIdWithPrivacy::Public(account_id),
+                AccountPrivacy::Private => AccountIdWithPrivacy::Private(account_id),
+            };
+            wallet
+                .storage()
+                .labels_for_account(target_privacy)
+                .next()
+                .map(|l| l.as_ref().to_string())
+        })
 }
 
 pub(super) fn parse_account_id(input: &str) -> SdkResult<AccountId> {

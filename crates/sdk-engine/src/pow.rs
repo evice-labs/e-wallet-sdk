@@ -17,9 +17,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use bridge_core::{DepositMetadata, DepositRecipient};
 use common::transaction::LeeTransaction;
-use lee::{AccountId, Actor, PrivateKey, PublicAccountEvidence, PublicKey, program::Program};
-use lee_core::{account::Nonce, native_token::Message as NativeTokenMessage};
+use lee::{
+    AccountId, Actor, Authority, PublicAccountEvidence,
+    program::Program,
+    signature::{INITIAL_KEY_TYPE, PublicAccountSecret, Signer, initial_key, public_account_id},
+};
+use lee_core::{
+    account::Nonce,
+    native_token::Message as NativeTokenMessage,
+    signing_key::{KeyType, SigningKeyState},
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::sync::Mutex;
@@ -44,17 +53,16 @@ pub const PATH_POW_STATUS: &str = "/pow/status";
 pub const PATH_CHANNEL_DEPOSIT: &str = "/channel/deposit";
 
 /// Reward units credited per mined EmPoWer PoW ticket/block (10,000,000 raw LEZ units).
-/// Sized above the 5,070,616 ZK proof fee reserve so a single mined ticket can fund
-/// both transparent and `Public ➝ Private` (shielding) transfers.
+/// Sized so a single mined ticket can cover public and `Public ➝ Private` (shielding) transfers.
 pub const MINED_BLOCK_REWARD_UNITS: u128 = 10_000_000;
 
-/// Known testnet / devnet dispenser private keys (hex-encoded 32-byte Schnorr/Ed25519 keys).
+/// Gas limit used for raw native bridge disbursements (plain native transfer without dry-run).
+const BRIDGE_DISBURSEMENT_GAS_LIMIT: u64 = 100_000;
+
+/// Known testnet dispenser `PublicAccountSecret`s (hex-encoded 32-byte roots).
+/// Standalone dev-env genesis accounts A & B are loaded directly from `testnet_initial_state`.
 const KNOWN_DISPENSER_KEYS_HEX: &[&str] = &[
-    // dev-env Genesis Alice (10T units on standalone dev-env)
-    "7f273098f25b71e6c005a9519f2678da8d1c7f01f6a27778e2d9948abdf901fb",
-    // dev-env Genesis Bob (20T units on standalone dev-env)
-    "919a5797723bc10fa1a2c388df5fc3ef79ce3c5fb8fffe30164a94d665bf8da2",
-    // Public Testnet primary deployer / dispenser (9p7BZn9g6UrVMBiatyeNtq4yv9DitxYM1ZXsjYi6vf47)
+    // Public Testnet primary deployer / dispenser
     "30c28abcbaa625fd24888c5fc6694c9c477cca270478ae61b945caf6c293d837",
     // Public Testnet secondary accounts
     "e7efd3867f42b1134a2a63d6f3e4153b568c147ab40382fba1227d4fcd5d03a1",
@@ -411,13 +419,12 @@ impl PowBridgeManager {
 }
 
 /// Encodes the canonical LEZ Bridge `DepositMetadata` for a transparent `Public` account
-/// (`DepositRecipient::Identified(PublicAccountEvidence::Key(pubkey))`).
-pub fn encode_public_channel_deposit_metadata(recipient: AccountId) -> Vec<u8> {
-    let mut raw = Vec::with_capacity(34);
-    raw.push(1u8); // DepositRecipient::Identified
-    raw.push(0u8); // PublicAccountEvidence::Key
-    raw.extend_from_slice(recipient.value());
-    raw
+/// (`DepositRecipient::Identified(PublicAccountEvidence::Key(initial_key))`).
+pub fn encode_public_channel_deposit_metadata(initial_key: SigningKeyState) -> Vec<u8> {
+    let metadata = DepositMetadata {
+        recipient: DepositRecipient::Identified(PublicAccountEvidence::Key(initial_key)),
+    };
+    borsh::to_vec(&metadata).expect("DepositMetadata should serialize")
 }
 
 /// Parses a deposit amount string (e.g., `"10000000"`, `"10,000,000.00"`, `"10000000 LOGOS"`)
@@ -483,14 +490,11 @@ pub async fn execute_channel_deposit(
     };
 
     // Guardrail: Reject private accounts (Asymmetric Deposit Trap)
-    let (client, gas_limit, wallet_public_keys) = {
+    let (client, gas_limit, wallet_public_keys, recipient_initial_key) = {
         let guard = wallet_mutex.lock().await;
         let wallet = guard.as_ref().ok_or(SdkError::WalletLocked)?;
         let kc = wallet.storage().key_chain();
-        if kc.private_account(recipient_account_id).is_some()
-            || kc.managed_private_account(recipient_account_id).is_some()
-            || kc.shared_private_account(recipient_account_id).is_some()
-        {
+        if crate::api::is_private_account_local(kc, recipient_account_id) {
             return Err(SdkError::InvalidArgument(
                 "Private accounts cannot receive transparent L1 channel deposits (Asymmetric Deposit Trap). Please select a Public account.".into(),
             ));
@@ -499,21 +503,28 @@ pub async fn execute_channel_deposit(
         let mut local_pub_keys = Vec::new();
         for (pub_id, _) in kc.public_account_ids() {
             if pub_id != recipient_account_id
-                && let Some(sk) = wallet.get_account_public_signing_key(pub_id)
+                && let Some(sk) = kc.pub_account_secret(pub_id)
             {
                 local_pub_keys.push((pub_id, sk.clone()));
             }
         }
+        let recipient_initial_key = wallet.get_account_initial_key(recipient_account_id);
 
         (
             wallet.client().clone(),
             wallet.config().gas_limit,
             local_pub_keys,
+            recipient_initial_key,
         )
     };
 
     let requested_amount = parse_deposit_amount(amount_str, unbridged_available)?;
-    let metadata_bytes = encode_public_channel_deposit_metadata(recipient_account_id);
+    let fallback_key = SigningKeyState {
+        key_type: KeyType::Schnorr,
+        key_commitment: *recipient_account_id.value(),
+    };
+    let metadata_bytes =
+        encode_public_channel_deposit_metadata(recipient_initial_key.unwrap_or(fallback_key));
 
     // 1. If L1 node is online, claim any ready PoW tickets and submit POST /channel/deposit
     if pow_mgr.node_online.load(Ordering::SeqCst) {
@@ -560,6 +571,7 @@ pub async fn execute_channel_deposit(
     let (tx_hash, actual_amount, dispenser_id, from_nonce) = execute_on_chain_bridge_disbursement(
         &client,
         recipient_account_id,
+        recipient_initial_key,
         requested_amount,
         gas_limit,
         &wallet_public_keys,
@@ -604,25 +616,25 @@ pub async fn execute_channel_deposit(
 async fn execute_on_chain_bridge_disbursement(
     client: &TestnetSequencerClient,
     recipient_id: AccountId,
+    recipient_initial_key: Option<SigningKeyState>,
     requested_amount: u128,
     gas_limit: u64,
-    wallet_public_keys: &[(AccountId, PrivateKey)],
+    wallet_public_keys: &[(AccountId, PublicAccountSecret)],
 ) -> SdkResult<(common::HashType, u128, AccountId, Nonce)> {
-    let mut candidates: Vec<(AccountId, PrivateKey)> = Vec::new();
+    let mut candidates: Vec<(AccountId, PublicAccountSecret)> = Vec::new();
     let mut seen_ids = BTreeSet::new();
 
     // A. Official `testnet_initial_state` Public Accounts A & B
     for init_acc in testnet_initial_state::initial_pub_accounts_private_keys() {
         if init_acc.account_id != recipient_id && seen_ids.insert(init_acc.account_id) {
-            candidates.push((init_acc.account_id, init_acc.pub_sign_key));
+            candidates.push((init_acc.account_id, init_acc.secret));
         }
     }
 
     // B. Built-in dev-env & testnet dispenser keys
     for &hex_sk in KNOWN_DISPENSER_KEYS_HEX {
-        if let Ok(sk) = PrivateKey::from_str(hex_sk) {
-            let pk = PublicKey::new_from_private_key(&sk);
-            let acc_id = AccountId::from(&pk);
+        if let Ok(sk) = PublicAccountSecret::from_str(hex_sk) {
+            let acc_id = public_account_id(&sk);
             if acc_id != recipient_id && seen_ids.insert(acc_id) {
                 candidates.push((acc_id, sk));
             }
@@ -658,16 +670,21 @@ async fn execute_on_chain_bridge_disbursement(
             max_gas_stor: 1_000_000,
         });
 
-    let effective_gas_limit = gas_limit.max(crate::api::DEFAULT_WALLET_GAS_LIMIT);
-    let max_fee = u128::from(effective_gas_limit).saturating_mul(u128::from(quote.base_fee_exec));
+    let effective_gas_limit = gas_limit.clamp(34_000, BRIDGE_DISBURSEMENT_GAS_LIMIT);
+    let exec_rate = u128::from(quote.next_base_fee_exec_ceiling.max(quote.base_fee_exec));
+    let stor_rate = u128::from(quote.next_base_fee_stor_ceiling.max(quote.base_fee_stor));
+    // Upper-bound candidate selection estimate (raw bridge transfer tx is ~650-900 bytes).
+    let selection_fee_bound = u128::from(effective_gas_limit)
+        .saturating_mul(exec_rate)
+        .saturating_add(2_048u128.saturating_mul(stor_rate));
 
     // Find the candidate dispenser with the highest on-chain balance
-    let mut best_candidate: Option<(AccountId, PrivateKey, u128)> = None;
+    let mut best_candidate: Option<(AccountId, PublicAccountSecret, u128)> = None;
     for (cand_id, cand_sk) in candidates {
         if let Ok(bal) = client.get_account_balance(cand_id).await
-            && bal > max_fee
+            && bal > selection_fee_bound
         {
-            if bal >= requested_amount.saturating_add(max_fee) {
+            if bal >= requested_amount.saturating_add(selection_fee_bound) {
                 best_candidate = Some((cand_id, cand_sk, bal));
                 break;
             }
@@ -686,11 +703,11 @@ async fn execute_on_chain_bridge_disbursement(
         ))
     })?;
 
-    let available_after_fee = dispenser_bal.saturating_sub(max_fee.saturating_mul(2));
+    let available_after_fee = dispenser_bal.saturating_sub(selection_fee_bound.saturating_mul(2));
     if available_after_fee == 0 {
         return Err(SdkError::InsufficientBalance {
             available: dispenser_bal,
-            required: requested_amount.saturating_add(max_fee),
+            required: requested_amount.saturating_add(selection_fee_bound),
         });
     }
     let transfer_amount = requested_amount.min(available_after_fee);
@@ -709,38 +726,60 @@ async fn execute_on_chain_bridge_disbursement(
     })
     .map_err(|e| SdkError::Internal(e.into()))?;
 
-    let public_actors = BTreeSet::from([
-        Actor::native_balance(dispenser_id),
-        Actor::native_balance(recipient_id),
-    ]);
+    let public_actors = [
+        (Actor::native_balance(dispenser_id), Authority::Signer),
+        (Actor::native_balance(recipient_id), Authority::None),
+    ];
     let nonces = BTreeMap::from([(dispenser_id, from_nonce)]);
-    let fee = Some(lee::FeeDeclaration::new(
-        dispenser_id,
-        effective_gas_limit,
-        0,
-        max_fee,
-    ));
     let mut admission_evidence = Vec::new();
     if from_nonce == Nonce(0) {
-        admission_evidence.push(PublicAccountEvidence::Key(PublicKey::new_from_private_key(
-            &dispenser_sk,
-        )));
+        admission_evidence.push(PublicAccountEvidence::Key(initial_key(&dispenser_sk)));
+    }
+    if let Some(rec_key) = recipient_initial_key
+        && client
+            .get_account(recipient_id)
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+    {
+        admission_evidence.push(PublicAccountEvidence::Key(rec_key));
     }
 
-    let message = lee::public_transaction::Message::new(
-        to_actor,
-        msg_data,
-        public_actors,
-        nonces,
-        fee,
-        admission_evidence,
-    );
-    let message_hash = message.hash();
-    let witness_set = lee::public_transaction::WitnessSet::from_raw_parts(vec![(
-        lee::Signature::new(&dispenser_sk, &message_hash),
-        PublicKey::new_from_private_key(&dispenser_sk),
-    )]);
-    let pub_tx = lee::public_transaction::PublicTransaction::new(message, witness_set);
+    let build_signed_tx = |max_fee: u128| {
+        let fee = Some(lee::FeeDeclaration::new(
+            dispenser_id,
+            effective_gas_limit,
+            0,
+            max_fee,
+        ));
+        let message = lee::public_transaction::Message::new(
+            to_actor,
+            msg_data.clone(),
+            public_actors,
+            nonces.clone(),
+            fee,
+            admission_evidence.clone(),
+        );
+        let signer = Signer::new(
+            &dispenser_sk,
+            from_nonce,
+            INITIAL_KEY_TYPE,
+            INITIAL_KEY_TYPE,
+        );
+        let witness_set = lee::public_transaction::WitnessSet::sign(&message, &[signer]);
+        lee::public_transaction::PublicTransaction::new(message, witness_set)
+    };
+
+    // Measure serialized wire bytes with fixed-width fee fields, then set exact dual-market max_fee.
+    let probe_tx = LeeTransaction::Public(build_signed_tx(0));
+    let data_bytes = probe_tx
+        .charged_bytes()
+        .map_err(|e| SdkError::Internal(e.into()))?;
+    let max_fee = u128::from(effective_gas_limit)
+        .saturating_mul(exec_rate)
+        .saturating_add(u128::from(data_bytes).saturating_mul(stor_rate));
+    let pub_tx = build_signed_tx(max_fee);
     let tx_hash = client
         .send_transaction(LeeTransaction::Public(pub_tx))
         .await
@@ -748,7 +787,7 @@ async fn execute_on_chain_bridge_disbursement(
     Ok((tx_hash, transfer_amount, dispenser_id, from_nonce))
 }
 
-fn load_lee_wallet_public_keys() -> Vec<(AccountId, PrivateKey)> {
+fn load_lee_wallet_public_keys() -> Vec<(AccountId, PublicAccountSecret)> {
     let mut keys = Vec::new();
     let mut paths = Vec::new();
     if let Ok(dir) = std::env::var("LEE_WALLET_HOME_DIR") {
@@ -778,15 +817,20 @@ fn load_lee_wallet_public_keys() -> Vec<(AccountId, PrivateKey)> {
             continue;
         };
         for item in accounts {
-            if let Some(pub_obj) = item.get("Public")
-                && let Some(sk_str) = pub_obj
-                    .get("data")
-                    .and_then(|d| d.get("sk"))
-                    .and_then(|s| s.as_str())
-                && let Ok(sk) = PrivateKey::from_str(sk_str)
+            let secret_str = item
+                .get("Public")
+                .and_then(|pub_obj| pub_obj.get("data"))
+                .and_then(|d| d.get("secret"))
+                .and_then(|s| s.as_str())
+                .or_else(|| {
+                    item.get("ImportedPublic")
+                        .and_then(|imp| imp.get("secret"))
+                        .and_then(|s| s.as_str())
+                });
+            if let Some(sk_str) = secret_str
+                && let Ok(sk) = PublicAccountSecret::from_str(sk_str)
             {
-                let pk = PublicKey::new_from_private_key(&sk);
-                keys.push((AccountId::from(&pk), sk));
+                keys.push((public_account_id(&sk), sk));
             }
         }
     }
@@ -877,13 +921,48 @@ mod tests {
 
     #[test]
     fn test_encode_public_channel_deposit_metadata() {
-        let acc = AccountId::new([0x42u8; 32]);
-        let encoded = encode_public_channel_deposit_metadata(acc);
-        // DepositRecipient::Identified (1) + PublicAccountEvidence::Key (0) + 32-byte key = 34 bytes
-        assert_eq!(encoded.len(), 34);
+        use borsh::BorshDeserialize as _;
+
+        let initial_key = SigningKeyState {
+            key_type: KeyType::Schnorr,
+            key_commitment: [0x42u8; 32],
+        };
+        let encoded = encode_public_channel_deposit_metadata(initial_key);
+        // DepositRecipient::Identified (1) + PublicAccountEvidence::Key (0) + KeyType::Schnorr (0) + 32-byte commitment = 35 bytes
+        assert_eq!(encoded.len(), 35);
         assert_eq!(encoded[0], 1);
         assert_eq!(encoded[1], 0);
-        assert_eq!(&encoded[2..], &[0x42u8; 32]);
+        assert_eq!(encoded[2], 0);
+        assert_eq!(&encoded[3..], &[0x42u8; 32]);
+        let decoded = DepositMetadata::try_from_slice(&encoded).expect("valid DepositMetadata");
+        assert_eq!(
+            decoded.recipient,
+            DepositRecipient::Identified(PublicAccountEvidence::Key(initial_key))
+        );
+    }
+
+    #[test]
+    fn test_testnet_initial_state_matches_v04_local_genesis() {
+        let initial_accounts = testnet_initial_state::initial_pub_accounts_private_keys();
+        assert!(initial_accounts.len() >= 2);
+        let alice = &initial_accounts[0];
+        let bob = &initial_accounts[1];
+        assert_eq!(
+            initial_key(&alice.secret).to_string(),
+            "00f00d1e62fa5278307fbde46d84a022f571caff20c157b2831884cc3cc2ae4c29"
+        );
+        assert_eq!(
+            initial_key(&bob.secret).to_string(),
+            "000223ea30d102c2f066dca058325ee30af21c23cf4dd9a16c3e4ab190ba0b49cb"
+        );
+        assert_eq!(
+            alice.account_id.to_string(),
+            "7VDm7YRPvimbZgCzuFqCGf6RwPsTV3XY5W9DzT71oain"
+        );
+        assert_eq!(
+            bob.account_id.to_string(),
+            "6AtC7ekAeMXh9QgiBoUnsb69SVEnCy9DMhCy4nmJDbkh"
+        );
     }
 
     #[test]

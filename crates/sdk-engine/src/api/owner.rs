@@ -5,18 +5,12 @@ impl OwnerApi for SdkEngine {
         let config_path = self.config.wallet_config_path.clone();
         let storage_path = self.config.wallet_storage_path.clone();
 
-        let effective_gas_limit = self.get_gas_limit().await;
-        let overrides = wallet::config::WalletConfigOverrides {
-            gas_limit: Some(effective_gas_limit),
+        let gas_limit_override = self.store.lock().await.state().gas_limit_override;
+        let overrides = WalletConfigOverrides {
+            gas_limit: gas_limit_override,
             ..Default::default()
         };
-
-        let mut wallet_config = WalletConfig::from_path_or_initialize_default(&config_path)
-            .map_err(SdkError::Internal)?;
-        wallet_config.apply_overrides(overrides.clone());
-        let inner_client =
-            WalletCore::client_from_config(&wallet_config).map_err(SdkError::Internal)?;
-        let client = TestnetSequencerClient::new(inner_client);
+        let client = build_wallet_client(&config_path, &overrides)?;
 
         let (new_wallet, mnemonic) = WalletCore::new_init_storage_with_client(
             config_path,
@@ -48,9 +42,9 @@ impl OwnerApi for SdkEngine {
         let mut wallet = match guard.take() {
             Some(w) => w,
             None => {
-                let effective_gas_limit = self.get_gas_limit().await;
-                let overrides = wallet::config::WalletConfigOverrides {
-                    gas_limit: Some(effective_gas_limit),
+                let gas_limit_override = self.store.lock().await.state().gas_limit_override;
+                let overrides = WalletConfigOverrides {
+                    gas_limit: gas_limit_override,
                     ..Default::default()
                 };
                 let (w, _) = WalletCore::new_init_storage_with_client(
@@ -104,18 +98,12 @@ impl OwnerApi for SdkEngine {
                 return Err(SdkError::InvalidPassword);
             }
 
-            let effective_gas_limit = self.get_gas_limit().await;
-            let overrides = wallet::config::WalletConfigOverrides {
-                gas_limit: Some(effective_gas_limit),
+            let gas_limit_override = self.store.lock().await.state().gas_limit_override;
+            let overrides = WalletConfigOverrides {
+                gas_limit: gas_limit_override,
                 ..Default::default()
             };
-            let mut wallet_config =
-                WalletConfig::from_path_or_initialize_default(&self.config.wallet_config_path)
-                    .map_err(SdkError::Internal)?;
-            wallet_config.apply_overrides(overrides.clone());
-            let inner_client =
-                WalletCore::client_from_config(&wallet_config).map_err(SdkError::Internal)?;
-            let client = TestnetSequencerClient::new(inner_client);
+            let client = build_wallet_client(&self.config.wallet_config_path, &overrides)?;
 
             let loaded_wallet = WalletCore::new_update_chain_with_client(
                 self.config.wallet_config_path.clone(),
@@ -192,16 +180,7 @@ impl OwnerApi for SdkEngine {
             account_id
         };
 
-        for s in self.sessions.list().await {
-            if s.caller_identity == "internal_wallet_ui" {
-                self.sessions
-                    .update(&s.id, |sess| {
-                        sess.add_grant(account_id, GrantKind::Read);
-                        sess.add_grant(account_id, GrantKind::Propose);
-                    })
-                    .await;
-            }
-        }
+        self.grant_internal_ui_sessions(account_id).await;
 
         Ok(account_id)
     }
@@ -235,16 +214,7 @@ impl OwnerApi for SdkEngine {
             account_id
         };
 
-        for s in self.sessions.list().await {
-            if s.caller_identity == "internal_wallet_ui" {
-                self.sessions
-                    .update(&s.id, |sess| {
-                        sess.add_grant(account_id, GrantKind::Read);
-                        sess.add_grant(account_id, GrantKind::Propose);
-                    })
-                    .await;
-            }
-        }
+        self.grant_internal_ui_sessions(account_id).await;
 
         Ok(account_id)
     }
@@ -265,17 +235,7 @@ impl OwnerApi for SdkEngine {
             .next()
             .is_some()
         {
-            let last_synced = wallet.storage().last_synced_block();
-            if last_synced == 0 {
-                let any_initialized = wallet
-                    .storage()
-                    .key_chain()
-                    .private_accounts()
-                    .any(|found| *found.account != lee::Account::default());
-                if !any_initialized && wallet.start_at_chain_tip().await.is_ok() {
-                    let _ = wallet.store_persistent_data();
-                }
-            }
+            ensure_private_sync_tip(wallet).await;
         }
         let store = self.store.lock().await;
         let custom_labels = &store.state().account_labels;
@@ -287,16 +247,8 @@ impl OwnerApi for SdkEngine {
         let mut views = Vec::new();
         for (account_id, _) in public_accounts {
             let balance = wallet.get_account_balance(account_id).await.ok();
-            let label_text = custom_labels
-                .get(&account_id.to_string())
-                .cloned()
-                .or_else(|| {
-                    wallet
-                        .storage()
-                        .labels_for_account(AccountIdWithPrivacy::Public(account_id))
-                        .next()
-                        .map(|l| l.as_ref().to_string())
-                });
+            let label_text =
+                resolve_account_label(wallet, custom_labels, account_id, &AccountPrivacy::Public);
             views.push(AccountView {
                 account_id,
                 privacy: AccountPrivacy::Public,
@@ -307,16 +259,8 @@ impl OwnerApi for SdkEngine {
 
         let private_accounts = key_chain.private_account_ids();
         for (account_id, _) in private_accounts {
-            let label_text = custom_labels
-                .get(&account_id.to_string())
-                .cloned()
-                .or_else(|| {
-                    wallet
-                        .storage()
-                        .labels_for_account(AccountIdWithPrivacy::Private(account_id))
-                        .next()
-                        .map(|l| l.as_ref().to_string())
-                });
+            let label_text =
+                resolve_account_label(wallet, custom_labels, account_id, &AccountPrivacy::Private);
             let shielded_bal = wallet
                 .private_account_state(account_id)
                 .and_then(|acc| acc.data.native_balance().ok())
@@ -516,24 +460,15 @@ impl OwnerApi for SdkEngine {
         let hash = common::HashType(bytes.try_into().unwrap());
         let client = self.client.clone();
 
-        let query_res: Result<Option<(serde_json::Value, BlockId)>, _> = client
-            .inner()
-            .request("getTransaction", rpc_params![hash])
-            .await;
-
-        let included_block = match query_res {
-            Ok(Some((_val, block_id))) => Some(block_id),
+        let included_block = match client.get_transaction(hash).await {
+            Ok(Some((_tx, block_id))) => Some(block_id),
             Ok(None) => None,
-            Err(e) => match client.get_transaction(hash).await {
-                Ok(Some((_tx, block_id))) => Some(block_id),
-                Ok(None) => None,
-                Err(_) => {
-                    return Err(SdkError::Internal(anyhow::anyhow!(
-                        "Sequencer get_transaction error: {:?}",
-                        e
-                    )));
-                }
-            },
+            Err(e) => {
+                return Err(SdkError::Internal(anyhow::anyhow!(
+                    "Sequencer get_transaction error: {:?}",
+                    e
+                )));
+            }
         };
 
         if let Some(block_id) = included_block {

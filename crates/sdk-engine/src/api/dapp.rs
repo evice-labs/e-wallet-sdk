@@ -103,17 +103,7 @@ impl DAppApi for SdkEngine {
             .await?;
         let guard = self.wallet.lock().await;
         let wallet = guard.as_ref().ok_or(SdkError::WalletLocked)?;
-        if wallet
-            .storage()
-            .key_chain()
-            .private_account(*account)
-            .is_some()
-            || wallet
-                .storage()
-                .key_chain()
-                .shared_private_account(*account)
-                .is_some()
-        {
+        if is_private_account_local(wallet.storage().key_chain(), *account) {
             let shielded = wallet
                 .private_account_state(*account)
                 .and_then(|acc| acc.data.native_balance().ok())
@@ -153,33 +143,18 @@ impl DAppApi for SdkEngine {
         let (is_from_private, is_to_private) = {
             let guard = self.wallet.lock().await;
             let wallet = guard.as_ref().ok_or(SdkError::WalletLocked)?;
+            let kc = wallet.storage().key_chain();
             let from_priv = match from_privacy {
                 Some(AccountPrivacy::Private) => true,
                 Some(AccountPrivacy::Public) => false,
-                None => {
-                    wallet
-                        .storage()
-                        .key_chain()
-                        .managed_private_account(from)
-                        .is_some()
-                        || wallet.storage().key_chain().private_account(from).is_some()
-                }
+                None => is_private_account_local(kc, from),
             };
             let to_priv = if is_to_explicit_private {
                 true
             } else if is_to_explicit_public {
                 false
             } else {
-                wallet
-                    .storage()
-                    .key_chain()
-                    .managed_private_account(to_account)
-                    .is_some()
-                    || wallet
-                        .storage()
-                        .key_chain()
-                        .private_account(to_account)
-                        .is_some()
+                is_private_account_local(kc, to_account)
             };
             (from_priv, to_priv)
         };
@@ -257,16 +232,7 @@ impl DAppApi for SdkEngine {
                         return;
                     };
 
-                    if w.storage().last_synced_block() == 0 {
-                        let any_initialized = w
-                            .storage()
-                            .key_chain()
-                            .private_accounts()
-                            .any(|found| *found.account != lee::Account::default());
-                        if !any_initialized && w.start_at_chain_tip().await.is_ok() {
-                            let _ = w.store_persistent_data();
-                        }
-                    }
+                    ensure_private_sync_tip(w).await;
                     if let Ok(tip) = w.get_last_block_id().await {
                         let last_synced = w.storage().last_synced_block();
                         if tip > last_synced && tip.saturating_sub(last_synced) <= 64 {
@@ -330,7 +296,7 @@ impl DAppApi for SdkEngine {
                                 && raw_err.contains("holds less than the transferred amount")
                             {
                                 format!(
-                                    "{} (Hint: When shielding to a fresh 0-balance private account, the transfer amount must exceed the private fee reserve of ~5,070,616 raw units)",
+                                    "{} (Hint: When shielding to a fresh 0-balance private account, the transfer amount must exceed the private transaction fee reserve)",
                                     raw_err
                                 )
                             } else {
@@ -371,26 +337,9 @@ impl DAppApi for SdkEngine {
         if from_holding == to_holding {
             let guard = self.wallet.lock().await;
             let wallet = guard.as_ref().ok_or(SdkError::WalletLocked)?;
-            let is_from_private = wallet
-                .storage()
-                .key_chain()
-                .managed_private_account(from_holding)
-                .is_some()
-                || wallet
-                    .storage()
-                    .key_chain()
-                    .private_account(from_holding)
-                    .is_some();
-            let is_to_private = wallet
-                .storage()
-                .key_chain()
-                .managed_private_account(to_holding)
-                .is_some()
-                || wallet
-                    .storage()
-                    .key_chain()
-                    .private_account(to_holding)
-                    .is_some();
+            let kc = wallet.storage().key_chain();
+            let is_from_private = is_private_account_local(kc, from_holding);
+            let is_to_private = is_private_account_local(kc, to_holding);
             if is_from_private == is_to_private {
                 return Err(SdkError::InvalidArgument(format!(
                     "Cannot transfer to the same holding account: {}",
@@ -468,24 +417,9 @@ impl DAppApi for SdkEngine {
                             .await;
                         return;
                     };
-                    let is_from_private = w
-                        .storage()
-                        .key_chain()
-                        .managed_private_account(from_holding)
-                        .is_some()
-                        || w.storage()
-                            .key_chain()
-                            .private_account(from_holding)
-                            .is_some();
-                    let is_to_private = w
-                        .storage()
-                        .key_chain()
-                        .managed_private_account(to_holding)
-                        .is_some()
-                        || w.storage()
-                            .key_chain()
-                            .private_account(to_holding)
-                            .is_some();
+                    let kc = w.storage().key_chain();
+                    let is_from_private = is_private_account_local(kc, from_holding);
+                    let is_to_private = is_private_account_local(kc, to_holding);
 
                     let sender_actor = if is_from_private {
                         wallet::AccountIdentity::PrivateOwned(from_holding)
@@ -498,6 +432,7 @@ impl DAppApi for SdkEngine {
                     let recipient_actor = if is_to_private {
                         wallet::AccountIdentity::PrivateOwned(to_holding)
                             .select_program_actor_state(definition)
+                            .without_authorization()
                     } else {
                         wallet::AccountIdentity::PublicNoSign(to_holding)
                             .select_program_actor_state(definition)
@@ -656,19 +591,11 @@ impl DAppApi for SdkEngine {
                     };
                     if let Some(primary) = mentions_to_send.first() {
                         let program = *primary;
+                        let kc = w.storage().key_chain();
                         let mut accounts = Vec::with_capacity(mentions_to_send.len());
                         for (idx, &acc) in mentions_to_send.iter().enumerate() {
-                            let is_private = w
-                                .storage()
-                                .key_chain()
-                                .managed_private_account(acc)
-                                .is_some()
-                                || w.storage().key_chain().private_account(acc).is_some();
-                            let is_owned_public = w
-                                .storage()
-                                .key_chain()
-                                .public_account_ids()
-                                .any(|(id, _)| id == acc);
+                            let is_private = is_private_account_local(kc, acc);
+                            let is_owned_public = kc.public_account_ids().any(|(id, _)| id == acc);
 
                             let identity = if is_private {
                                 wallet::AccountIdentity::PrivateOwned(acc)
@@ -679,12 +606,7 @@ impl DAppApi for SdkEngine {
                             };
                             accounts.push(identity.select_program_actor_state(program));
                         }
-                        let is_primary_private = w
-                            .storage()
-                            .key_chain()
-                            .managed_private_account(*primary)
-                            .is_some()
-                            || w.storage().key_chain().private_account(*primary).is_some();
+                        let is_primary_private = is_private_account_local(kc, *primary);
                         let pre_nonce = if !is_primary_private {
                             w.get_accounts_nonces(&[*primary])
                                 .await
@@ -816,19 +738,11 @@ impl DAppApi for SdkEngine {
                         return;
                     };
 
+                    let kc = w.storage().key_chain();
                     let mut accounts = Vec::with_capacity(mentions.len());
                     for &acc in &mentions {
-                        let is_private = w
-                            .storage()
-                            .key_chain()
-                            .managed_private_account(acc)
-                            .is_some()
-                            || w.storage().key_chain().private_account(acc).is_some();
-                        let is_owned_public = w
-                            .storage()
-                            .key_chain()
-                            .public_account_ids()
-                            .any(|(id, _)| id == acc);
+                        let is_private = is_private_account_local(kc, acc);
+                        let is_owned_public = kc.public_account_ids().any(|(id, _)| id == acc);
 
                         let identity = if is_private {
                             wallet::AccountIdentity::PrivateOwned(acc)
@@ -840,12 +754,7 @@ impl DAppApi for SdkEngine {
                         accounts.push(identity.select_program_actor_state(program_id));
                     }
 
-                    let is_payer_private = w
-                        .storage()
-                        .key_chain()
-                        .managed_private_account(payer_id)
-                        .is_some()
-                        || w.storage().key_chain().private_account(payer_id).is_some();
+                    let is_payer_private = is_private_account_local(kc, payer_id);
                     let pre_nonce = if !is_payer_private {
                         w.get_accounts_nonces(&[payer_id])
                             .await

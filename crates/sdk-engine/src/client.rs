@@ -132,27 +132,14 @@ impl WalletSequencerClient for TestnetSequencerClient {
         from_position: CommitmentPosition,
         limit: PageLimit,
     ) -> Result<PublicationsPage, Self::Error> {
-        match RpcClient::get_publications(&self.inner, from_position, limit).await {
-            Ok(pubs) => Ok(pubs),
-            Err(ClientError::Call(ref err_obj)) if err_obj.code() == -32601 => {
-                Ok(PublicationsPage {
-                    publications: Vec::new(),
-                    recovery_bindings: BTreeMap::new(),
-                })
-            }
-            Err(e) => Err(e),
-        }
+        RpcClient::get_publications(&self.inner, from_position, limit).await
     }
 
     async fn get_recovery_binding(
         &self,
         address: AccountId,
     ) -> Result<Option<EncryptedNote>, Self::Error> {
-        match RpcClient::get_recovery_binding(&self.inner, address).await {
-            Ok(binding) => Ok(binding),
-            Err(ClientError::Call(ref err_obj)) if err_obj.code() == -32601 => Ok(None),
-            Err(e) => Err(e),
-        }
+        RpcClient::get_recovery_binding(&self.inner, address).await
     }
 }
 
@@ -191,7 +178,6 @@ pub mod prover_daemon {
     use tokio::sync::mpsc;
 
     pub const DEFAULT_SOCKET_PATH: &str = "/tmp/lez_prover.sock";
-    pub const DEFAULT_TCP_PORT: u16 = 3909;
 
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     #[serde(tag = "status", rename_all = "snake_case")]
@@ -280,8 +266,6 @@ pub mod prover_daemon {
         is_running: Arc<AtomicBool>,
         max_concurrency: usize,
         socket_path: PathBuf,
-        #[allow(dead_code)]
-        tcp_port: Option<u16>,
         task_sender: mpsc::Sender<ProvingJobPayload>,
     }
 
@@ -289,7 +273,6 @@ pub mod prover_daemon {
         pub fn new(
             max_concurrency: usize,
             socket_path: Option<PathBuf>,
-            tcp_port: Option<u16>,
         ) -> (Arc<Self>, mpsc::Receiver<ProvingJobPayload>) {
             let (tx, rx) = mpsc::channel(128);
             let daemon = Arc::new(Self {
@@ -303,7 +286,6 @@ pub mod prover_daemon {
                     max_concurrency
                 },
                 socket_path: socket_path.unwrap_or_else(|| PathBuf::from(DEFAULT_SOCKET_PATH)),
-                tcp_port,
                 task_sender: tx,
             });
             (daemon, rx)
@@ -704,7 +686,7 @@ pub mod prover_daemon {
             .expect("Failed to create tokio runtime");
 
         rt.block_on(async {
-            let (daemon, rx) = ProverWorkerDaemon::new(threads, Some(socket_path.clone()), None);
+            let (daemon, rx) = ProverWorkerDaemon::new(threads, Some(socket_path.clone()));
             daemon.clone().spawn_worker_loop(rx);
 
             tokio::select! {
