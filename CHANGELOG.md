@@ -2,6 +2,29 @@
 
 All notable changes to the Evice Wallet SDK are documented in this file.
 
+## [v0.3.0] - 2026-11-27
+
+### LEZ v0.4.0 & Testnet 0.4 Compatibility
+- **Upstream LEZ v0.4.0 Upgrade:** Pinned `logos-execution-zone` crates (`wallet`, `lee`, `lee_core`, `common`, `sequencer_service_rpc`, `testnet_initial_state`, `bridge_core`, `program_loader_core`) to official release tag `v0.4.0` (`rev a255b42c0fc80d1cb219454a3a1f5ec3b5d92115`), aligned `risc0-binfmt = "3.0.6"` and `risc0-zkos-v1compat = "=2.2.3"`, and removed obsolete `keycard_wallet` and `libpcsclite` dependencies.
+- **SDK Engine & Bridge Fixes (`crates/sdk-engine`):**
+  - Migrated account/signing APIs to `PublicAccountSecret`/`pub_account_secret`, `wallet::DEFAULT_GAS_LIMIT` (`10,000,000`), `bridge_core::{DepositMetadata, DepositRecipient}`, `Authority::Signer`/`Authority::None`, and `WitnessSet::sign`.
+  - Fixed dual-market (`exec` + `stor` `charged_bytes()`) `max_fee` sizing in `pow.rs::execute_on_chain_bridge_disbursement` verified against a live standalone v0.4.0 sequencer.
+  - Updated `sdk_info().network` to `"testnet-0.4"`, removed pre-v0.4.0 RPC `-32601` workarounds, and deduplicated engine/client helpers.
+- **C-ABI FFI (`crates/sdk-ffi`, `include/e_wallet_sdk.h`):**
+  - Restored `#[unsafe(no_mangle)]` on `e_wallet_get_gas_limit` and regenerated `include/e_wallet_sdk.h` via `cbindgen` to include `e_wallet_get_gas_limit` and `e_wallet_get_transaction_status`.
+- **CLI, Dispatcher, Dev-Env & CI:**
+  - Derived standalone/dispatcher genesis Alice directly from `testnet_initial_state::initial_pub_accounts_private_keys()` and aligned `dev-env/sequencer_config.json`, `dev-env/genesis_accounts.json`, `Dockerfile` (`r0vm 3.1.0`, `--branch v0.4.0`), `Justfile` (`--tag v0.4.0`), and GitHub Actions workflows.
+  - Added ignored live E2E test `test_live_sequencer_transfer_routes_and_bridge` covering PoW mining + `channel_deposit` and all four transfer routes (`Public -> Public`, `Public -> Private`, `Private -> Private`, `Private -> Public`).
+- **Release Version Bump:** Promoted workspace SDK version from `0.3.0-rc1` to `0.3.0`.
+
+## [v0.3.0-rc1] - 2026-11-26
+
+### Modular Refactoring & Dependency Alignment (PR #24)
+- **Workspace & Legacy Cleanup (`3d3cab3`):** Removed `crates/sdk-engine/src/v03_compat.rs`, updated `logos-execution-zone` pins, aligned `risc0` dependencies in `Cargo.toml`, and simplified `crates/sdk-engine/src/client.rs`, `crates/sdk-engine/src/pow.rs`, and `crates/cli/src/main.rs`.
+- **Modular SDK Engine & Nonce-Drop Detection (`5792f01`):** Decomposed `crates/sdk-engine/src/api.rs` into domain modules (`api/mod.rs`, `api/dapp.rs`, `api/engine.rs`, `api/owner.rs`) and added `submitted_tx_nonces` tracking to report `"dropped"` transactions in `get_transaction_status`.
+- **Modular C-ABI FFI (`bd20600`):** Split `crates/sdk-ffi/src/lib.rs` into domain modules (`approval.rs`, `dapp.rs`, `dto.rs`, `identity.rs`, `pow.rs`, `wallet.rs`).
+- **Documentation (`e5c0f2f`):** Updated `README.md`, `docs/ARCHITECTURE.md`, and `docs/sdk-api-reference.md`.
+
 ## [v0.2.2] - 2026-11-11
 
 ### Features & Cross-Platform Compatibility

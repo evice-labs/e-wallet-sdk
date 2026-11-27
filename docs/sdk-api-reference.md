@@ -1,6 +1,6 @@
 ## Evice Wallet SDK — API Reference Manual
 
-> **Version:** Draft v0.2  
+> **Version:** v0.3.0  
 > **Target Audience:** dApp Developers, Core Module (`wallet-provider`) Integrators, and Native Client Engineers.
 
 ## 1. Architectural Overview & API Surfaces
@@ -77,9 +77,9 @@ Retrieves engine metadata, API compatibility version, and runtime status.
 ```json
 {
   "ok": true,
-  "sdk_version": "0.2.3",
+  "sdk_version": "0.3.0",
   "api_version": 1,
-  "network": "standalone-local",
+  "network": "testnet-0.4",
   "wallet_initialized": true,
   "wallet_locked": false
 }
@@ -335,7 +335,7 @@ Privileged interface restricted to the wallet owner / host environment:
 | `e_wallet_pow_stop_mining(engine)` | Stops the EmPoWer Proof-of-Work mining daemon (`PUT /pow/mining/stop`) and halts the local SHA-256 PoW worker. | None. |
 | `e_wallet_pow_status(engine)` | Queries live EmPoWer mining telemetry (`GET /pow/status`, `GET /pow/rewards/claimable`) and persistent unbridged L1 reward balance (`unbridged_l1_balance`). | None. |
 | `e_wallet_channel_deposit(engine, recipient_account, amount_str)` | Bridges unbridged L1 PoW rewards to a **Transparent/Public** LEZ account via L1 `/pow/claim` + `/channel/deposit` (`bridge_core::DepositMetadata`) and on-chain LEZ settlement. Enforces the Asymmetric Deposit Trap guardrail (rejects `Private` destinations). | `recipient_account`: Destination Public AccountId; `amount_str`: Raw atomic units string. |
-| `e_wallet_get_transaction_status(engine, tx_hash)` | Queries on-chain inclusion status of a transaction (`pending` or `confirmed` with `block_id`) via direct sequencer JSON-RPC `getTransaction` without payload deserialization. | `tx_hash`: 32-byte hex string (with or without `0x` prefix). |
+| `e_wallet_get_transaction_status(engine, tx_hash)` | Queries on-chain inclusion status of a transaction (`pending`, `confirmed` with `block_id`, or `dropped`) via native sequencer RPC `getTransaction` and nonce tracking. | `tx_hash`: 32-byte hex string (with or without `0x` prefix). |
 
 ### 4.1 Vault Passphrase Rotation (`change_password`)
 Allows the wallet owner to change the master encryption passphrase protecting local keystore storage:
@@ -358,7 +358,7 @@ Queries the current lifecycle / inclusion status of a transaction directly from 
   - When the sequencer includes the transaction in a block, returns `"status": "confirmed"` and `"block_id": <u64>`.
   - When the transaction is in mempool or pending sequencer batching, returns `"status": "pending"` and `"block_id": null`.
   - When the transaction is not in a block and the sender's on-chain nonce (`get_accounts_nonces`) has already advanced past the submitted `tx_nonce` (tracked in `submitted_tx_nonces`), returns `"status": "dropped"` and `"block_id": null`.
-  - Bypasses transaction payload protobuf deserialization, preventing decoding failures across LEZ v0.4 RPC responses.
+  - Uses native LEZ v0.4.0 typed RPC queries (`client.get_transaction`).
 - **Response Format (Confirmed):**
 ```json
 {
