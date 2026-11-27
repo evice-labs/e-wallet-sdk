@@ -107,9 +107,105 @@ async fn test_wallet_lifecycle_and_account_derivation() {
     assert!(post_unlock_accs.iter().any(|a| a.account_id == priv_acc));
 }
 
+async fn spawn_mock_balance_rpc() -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock rpc listener");
+    let addr = listener.local_addr().expect("local addr");
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buf = Vec::with_capacity(2048);
+                let mut chunk = [0u8; 1024];
+                let header_end;
+                loop {
+                    let Ok(n) = socket.read(&mut chunk).await else {
+                        return;
+                    };
+                    if n == 0 {
+                        return;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                    if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                        header_end = pos + 4;
+                        break;
+                    }
+                }
+                let headers = String::from_utf8_lossy(&buf[..header_end]);
+                let content_len = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (k, v) = line.split_once(':')?;
+                        k.eq_ignore_ascii_case("content-length")
+                            .then(|| v.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap_or(0);
+                while buf.len() < header_end + content_len {
+                    let Ok(n) = socket.read(&mut chunk).await else {
+                        return;
+                    };
+                    if n == 0 {
+                        break;
+                    }
+                    buf.extend_from_slice(&chunk[..n]);
+                }
+                let req_body = &buf[header_end..(header_end + content_len).min(buf.len())];
+                let parsed = serde_json::from_slice::<serde_json::Value>(req_body).ok();
+                let id = parsed
+                    .as_ref()
+                    .and_then(|v| v.get("id"))
+                    .cloned()
+                    .unwrap_or(serde_json::json!(1));
+                let method = parsed
+                    .as_ref()
+                    .and_then(|v| v.get("method"))
+                    .and_then(|m| m.as_str())
+                    .unwrap_or("");
+                let resp_json = match method {
+                    "getAccountBalance" | "getLastBlockId" => serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "result": 0
+                    }),
+                    _ => serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": id,
+                        "error": {"code": -32601, "message": "Method not mocked"}
+                    }),
+                }
+                .to_string();
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{resp_json}",
+                    resp_json.len()
+                );
+                let _ = socket.write_all(resp.as_bytes()).await;
+            });
+        }
+    });
+    format!("http://{addr}")
+}
+
 #[tokio::test]
 async fn test_dapp_session_and_granular_grants() {
     let env = TestEnv::new();
+    let mock_url = spawn_mock_balance_rpc().await;
+    let wallet_cfg = serde_json::json!({
+        "sequencer": {
+            "sequencer_addr": mock_url,
+        },
+        "seq_poll_timeout": "5s",
+        "seq_tx_poll_max_blocks": 5,
+        "seq_poll_max_retries": 2,
+        "seq_block_poll_max_amount": 10
+    });
+    std::fs::write(
+        env.data_dir.join("wallet_config.json"),
+        serde_json::to_string_pretty(&wallet_cfg).unwrap(),
+    )
+    .expect("write mock wallet_config.json");
+
     let handler = Arc::new(MockApprovalHandler::new(ApprovalDecision::Approve));
     let engine = SdkEngine::open_or_init(env.data_dir.clone(), "testpass_master_123", handler)
         .expect("failed to initialize wallet engine");
@@ -756,4 +852,343 @@ fn test_ffi_contract_calls_and_holdings() {
     unsafe { e_wallet_free_string(list_res) };
 
     unsafe { e_wallet_engine_free(ffi_engine) };
+}
+
+fn to_hex_lower(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn rpc_post(
+    sequencer_url: &str,
+    method: &str,
+    params: serde_json::Value,
+) -> Option<serde_json::Value> {
+    use std::io::{Read, Write};
+    let host_port = sequencer_url
+        .trim_start_matches("http://")
+        .trim_end_matches('/');
+    let mut stream = std::net::TcpStream::connect(host_port).ok()?;
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params,
+    })
+    .to_string();
+    let req = format!(
+        "POST / HTTP/1.1\r\nHost: {host_port}\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    stream.write_all(req.as_bytes()).ok()?;
+    let mut resp = String::new();
+    stream.read_to_string(&mut resp).ok()?;
+    let (_, resp_body) = resp.split_once("\r\n\r\n")?;
+    serde_json::from_str::<serde_json::Value>(resp_body)
+        .ok()?
+        .get("result")
+        .cloned()
+}
+
+async fn wait_for_submitted_tx(
+    engine: &SdkEngine,
+    request_id: &sdk_engine::request::RequestId,
+    label: &str,
+) -> String {
+    use sdk_engine::request::RequestStatus;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let status = engine
+            .get_request_status(request_id)
+            .await
+            .expect("get_request_status failed");
+        match status {
+            RequestStatus::Submitted { tx_hash } | RequestStatus::Confirmed { tx_hash, .. } => {
+                let raw: [u8; 32] = tx_hash.into();
+                return to_hex_lower(&raw);
+            }
+            RequestStatus::Failed { reason } => {
+                panic!("{label} failed: {reason}");
+            }
+            RequestStatus::Rejected | RequestStatus::Cancelled | RequestStatus::TimedOut => {
+                panic!("{label} ended with {status:?}");
+            }
+            RequestStatus::PendingApproval | RequestStatus::Approved => {
+                if tokio::time::Instant::now() >= deadline {
+                    panic!("{label} timed out waiting for submission (last={status:?})");
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            }
+        }
+    }
+}
+
+async fn wait_for_confirmed_tx(engine: &SdkEngine, tx_hash_hex: &str, label: &str) -> u64 {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(45);
+    loop {
+        let st = engine
+            .get_transaction_status(tx_hash_hex)
+            .await
+            .expect("get_transaction_status failed");
+        if st.status == "confirmed" {
+            return st
+                .block_id
+                .expect("confirmed transaction should report block_id");
+        }
+        assert!(
+            !st.status.starts_with("failed") && st.status != "reverted",
+            "{label} tx {tx_hash_hex} ended with status: {}",
+            st.status
+        );
+        if tokio::time::Instant::now() >= deadline {
+            panic!(
+                "{label} tx {tx_hash_hex} timed out waiting for confirmation (last={})",
+                st.status
+            );
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+}
+
+fn log_tx_receipt_summary(sequencer_url: &str, label: &str, tx_hash_hex: &str) {
+    let receipt = rpc_post(
+        sequencer_url,
+        "getTransactionReceipt",
+        serde_json::json!([tx_hash_hex]),
+    );
+    let fee_state = rpc_post(sequencer_url, "getFeeState", serde_json::json!([]));
+    println!("[{label}] receipt={receipt:?} | head_fee_state={fee_state:?}");
+}
+
+/// Live end-to-end verification against the standalone LEZ v0.4.0 sequencer (`http://127.0.0.1:3040`).
+/// Exercises PoW mining + `channel_deposit` (bridge disbursement) and all four native transfer
+/// routes (`Public -> Public`, `Public -> Private`, `Private -> Private`, `Private -> Public`).
+///
+/// Run explicitly with:
+/// `RISC0_DEV_MODE=1 cargo test -p integration-tests --test e2e_tests test_live_sequencer_transfer_routes_and_bridge -- --ignored --nocapture`
+#[tokio::test]
+#[ignore = "requires a running standalone LEZ v0.4.0 sequencer (e.g. http://127.0.0.1:3040)"]
+async fn test_live_sequencer_transfer_routes_and_bridge() {
+    let sequencer_url =
+        std::env::var("LEZ_SEQUENCER_URL").unwrap_or_else(|_| "http://127.0.0.1:3040".to_string());
+    let env = TestEnv::new();
+
+    // Point WalletConfig in TestEnv to the running standalone sequencer before engine init.
+    let wallet_cfg = serde_json::json!({
+        "sequencer": {
+            "sequencer_addr": sequencer_url,
+        },
+        "seq_poll_timeout": "30s",
+        "seq_tx_poll_max_blocks": 20,
+        "seq_poll_max_retries": 10,
+        "seq_block_poll_max_amount": 100
+    });
+    std::fs::write(
+        env.data_dir.join("wallet_config.json"),
+        serde_json::to_string_pretty(&wallet_cfg).unwrap(),
+    )
+    .expect("write wallet_config.json");
+
+    let handler = Arc::new(MockApprovalHandler::new(ApprovalDecision::Approve));
+    let engine =
+        SdkEngine::open_or_init(env.data_dir.clone(), "live_test_pass_123", handler).expect("init");
+    let _mnemonic = engine
+        .create_wallet("live_test_pass_123")
+        .await
+        .expect("create_wallet");
+    let session = engine
+        .connect("internal_wallet_ui".to_string(), 1)
+        .await
+        .expect("connect internal_wallet_ui");
+
+    let pub_a = engine
+        .create_account_public(Some("PubA".into()))
+        .await
+        .expect("pub_a");
+    let pub_b = engine
+        .create_account_public(Some("PubB".into()))
+        .await
+        .expect("pub_b");
+    let priv_a = engine
+        .create_account_private(Some("PrivA".into()))
+        .await
+        .expect("priv_a");
+    let priv_b = engine
+        .create_account_private(Some("PrivB".into()))
+        .await
+        .expect("priv_b");
+
+    // 0. PoW mining + Bridge channel_deposit (Genesis Alice -> PubA)
+    // Mine 5 tickets (50_000_000 units) so PubA and PrivA comfortably cover all 4 routes
+    // including two subsequent private-paid txs whose reserves (~8.4M each at base_fee=8)
+    // account for `PROOF_BYTES` (223_047 bytes) and headroom.
+    let _ = engine.pow_start_mining(1).await.expect("pow_start_mining");
+    let mine_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(35);
+    loop {
+        let st = engine.pow_status().await.expect("pow_status");
+        if st.blocks_mined >= 5 {
+            println!(
+                "[PoW] mined blocks={}, unbridged={}",
+                st.blocks_mined, st.unbridged_balance
+            );
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < mine_deadline,
+            "PoW mining timed out waiting for 5 tickets (got {})",
+            st.blocks_mined
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    }
+    let _ = engine.pow_stop_mining().await.expect("pow_stop_mining");
+
+    let deposit = engine
+        .channel_deposit(&pub_a.to_string(), "50000000")
+        .await
+        .expect("channel_deposit failed");
+    let dep_block = wait_for_confirmed_tx(&engine, &deposit.tx_hash, "channel_deposit").await;
+    log_tx_receipt_summary(&sequencer_url, "channel_deposit", &deposit.tx_hash);
+    let pub_a_bal_0 = engine
+        .get_balance(&session, &pub_a)
+        .await
+        .expect("bal pub_a");
+    assert_eq!(pub_a_bal_0, 50_000_000);
+    println!(
+        "[channel_deposit] tx={} block={} amount={} pub_a_after={}",
+        deposit.tx_hash, dep_block, deposit.amount_deposited, pub_a_bal_0
+    );
+
+    // 1. Public -> Public (PubA -> PubB: 500_000)
+    let pub_pub_amount = 500_000u128;
+    let req_1 = engine
+        .propose_native_transfer(
+            &session,
+            pub_a,
+            format!("Public/{pub_b}"),
+            pub_pub_amount,
+            Some(AccountPrivacy::Public),
+        )
+        .await
+        .expect("propose Public -> Public");
+    let tx_1_hex = wait_for_submitted_tx(&engine, &req_1, "Public -> Public").await;
+    let blk_1 = wait_for_confirmed_tx(&engine, &tx_1_hex, "Public -> Public").await;
+    log_tx_receipt_summary(&sequencer_url, "Public -> Public", &tx_1_hex);
+
+    let pub_a_bal_1 = engine.get_balance(&session, &pub_a).await.expect("pub_a_1");
+    let pub_b_bal_1 = engine.get_balance(&session, &pub_b).await.expect("pub_b_1");
+    assert_eq!(pub_b_bal_1, pub_pub_amount);
+    assert!(pub_a_bal_1 <= pub_a_bal_0 - pub_pub_amount);
+    println!(
+        "[Public -> Public] tx={} block={} pub_a: {} -> {} (fee={}), pub_b: 0 -> {}",
+        tx_1_hex,
+        blk_1,
+        pub_a_bal_0,
+        pub_a_bal_1,
+        pub_a_bal_0 - pub_pub_amount - pub_a_bal_1,
+        pub_b_bal_1
+    );
+
+    // 2. Public -> Private (Shield: PubA -> PrivA: 25_000_000)
+    let shield_amount = 25_000_000u128;
+    let req_2 = engine
+        .propose_native_transfer(
+            &session,
+            pub_a,
+            format!("Private/{priv_a}"),
+            shield_amount,
+            Some(AccountPrivacy::Public),
+        )
+        .await
+        .expect("propose Public -> Private");
+    let tx_2_hex = wait_for_submitted_tx(&engine, &req_2, "Public -> Private").await;
+    let blk_2 = wait_for_confirmed_tx(&engine, &tx_2_hex, "Public -> Private").await;
+    log_tx_receipt_summary(&sequencer_url, "Public -> Private", &tx_2_hex);
+
+    let pub_a_bal_2 = engine.get_balance(&session, &pub_a).await.expect("pub_a_2");
+    let priv_a_bal_2 = engine
+        .get_balance(&session, &priv_a)
+        .await
+        .expect("priv_a_2");
+    assert!(
+        priv_a_bal_2 > 0 && priv_a_bal_2 <= shield_amount,
+        "unexpected priv_a balance after shield: {priv_a_bal_2}"
+    );
+    println!(
+        "[Public -> Private] tx={} block={} pub_a: {} -> {}, priv_a: 0 -> {} (fee_deducted={})",
+        tx_2_hex,
+        blk_2,
+        pub_a_bal_1,
+        pub_a_bal_2,
+        priv_a_bal_2,
+        (pub_a_bal_1 - pub_a_bal_2) - priv_a_bal_2
+    );
+
+    // 3. Private -> Private (PrivA -> PrivB: 4_000_000)
+    let priv_priv_amount = 4_000_000u128;
+    let req_3 = engine
+        .propose_native_transfer(
+            &session,
+            priv_a,
+            format!("Private/{priv_b}"),
+            priv_priv_amount,
+            Some(AccountPrivacy::Private),
+        )
+        .await
+        .expect("propose Private -> Private");
+    let tx_3_hex = wait_for_submitted_tx(&engine, &req_3, "Private -> Private").await;
+    let blk_3 = wait_for_confirmed_tx(&engine, &tx_3_hex, "Private -> Private").await;
+    log_tx_receipt_summary(&sequencer_url, "Private -> Private", &tx_3_hex);
+
+    let priv_a_bal_3 = engine
+        .get_balance(&session, &priv_a)
+        .await
+        .expect("priv_a_3");
+    let priv_b_bal_3 = engine
+        .get_balance(&session, &priv_b)
+        .await
+        .expect("priv_b_3");
+    assert_eq!(priv_b_bal_3, priv_priv_amount);
+    assert!(priv_a_bal_3 <= priv_a_bal_2 - priv_priv_amount);
+    println!(
+        "[Private -> Private] tx={} block={} priv_a: {} -> {} (private_fee={}), priv_b: 0 -> {}",
+        tx_3_hex,
+        blk_3,
+        priv_a_bal_2,
+        priv_a_bal_3,
+        priv_a_bal_2 - priv_priv_amount - priv_a_bal_3,
+        priv_b_bal_3
+    );
+
+    // 4. Private -> Public (Unshield: PrivA -> PubB: 2_000_000)
+    let unshield_amount = 2_000_000u128;
+    let req_4 = engine
+        .propose_native_transfer(
+            &session,
+            priv_a,
+            format!("Public/{pub_b}"),
+            unshield_amount,
+            Some(AccountPrivacy::Private),
+        )
+        .await
+        .expect("propose Private -> Public");
+    let tx_4_hex = wait_for_submitted_tx(&engine, &req_4, "Private -> Public").await;
+    let blk_4 = wait_for_confirmed_tx(&engine, &tx_4_hex, "Private -> Public").await;
+    log_tx_receipt_summary(&sequencer_url, "Private -> Public", &tx_4_hex);
+
+    let priv_a_bal_4 = engine
+        .get_balance(&session, &priv_a)
+        .await
+        .expect("priv_a_4");
+    let pub_b_bal_4 = engine.get_balance(&session, &pub_b).await.expect("pub_b_4");
+    assert_eq!(pub_b_bal_4, pub_b_bal_1 + unshield_amount);
+    assert!(priv_a_bal_4 <= priv_a_bal_3 - unshield_amount);
+    println!(
+        "[Private -> Public] tx={} block={} priv_a: {} -> {} (private_fee={}), pub_b: {} -> {}",
+        tx_4_hex,
+        blk_4,
+        priv_a_bal_3,
+        priv_a_bal_4,
+        priv_a_bal_3 - unshield_amount - priv_a_bal_4,
+        pub_b_bal_1,
+        pub_b_bal_4
+    );
 }
